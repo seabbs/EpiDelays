@@ -1,113 +1,107 @@
-#' Parametric estimation with maximum likelihood for interval-censored data
+#' Parametric estimation with maximum likelihood for single or doubly
+#' interval-censored data
 #'
 #' @description
-#' This routine fits commonly used parametric models to interval-censored data.
+#' Fit parametric models to single or doubly
+#' interval-censored data with maximum likelihood. Data input must be a
+#' data frame \code{x} with either two columns (named \code{xl} and \code{xr})
+#' representing the left and right bound, respectively, of the delay variable,
+#' or four columns (named \code{x1l}, \code{x1r}, \code{x2l}, \code{x2r})
+#' representing the left and right bound, respectively, of the primary and
+#' secondary events of the delay variable. The naming convention of the data
+#' columns is strict and different namings are not allowed. When data frame
+#' \code{x} has two columns, a single interval-censored likelihood function is
+#' used. Note that the left bound should be strictly smaller than the right
+#' bound, i.e. \code{xl < xr} must be satisfied for all rows in \code{x}.
+#' When data frame \code{x} has four columns, a doubly interval-censored
+#' likelihood function is used. In that case \code{x1l < x1r} and
+#' \code{x2l < x2r} must hold for all rows in \code{x}. \code{NA} values are
+#' not allowed in data frame \code{x}.
 #'
-#' @usage parfitml(x, family = "gamma", boot = FALSE, Bboot = 200, pgbar = FALSE)
+#' @details This routine computes maximum likelihood estimates of model
+#' parameters as well as different features of the fitted delay variable
+#' distribution (mean, variance, standard deviation and selected quantiles). The
+#' nonparametric bootstrap is used to compute standard errors and confidence
+#' intervals for the model parameters and different features. By default, the
+#' number of bootstrap samples is fixed at 1000. Maximum likelihood estimates
+#' are computed with the \code{optim} function using the Nelder and Mead (1965)
+#' method. Initial parameter values are computed via a moment matching approach.
 #'
-#' @param x A data frame with n rows and two columns indicating the left and
-#'  right bound, respectively, of the interval-censored observations. \code{NA}
-#'  values are not allowed.
+#' @param x A data frame with either two columns named \code{xl} and \code{xr},
+#' or four columns named \code{x1l}, \code{x1r}, \code{x2l}, \code{x2r}. See
+#' description for constraints imposed on the columns.
+#' @param family A character string specifying the name of the parametric
+#' family. Can be one of the following: \code{"gaussian"}, \code{"gamma"},
+#' \code{"lognormal"}, \code{"weibull"}, or \code{"skewnorm"}.
+#' @param Bboot Number of bootstrap samples. Default is 1000.
+#' @param pgbar Should a progress bar be displayed in console? Default is TRUE.
 #'
-#' @param family The name of the parametric family used in modeling the data.
-#'  Must be one of: "gamma", "lognormal", "weibull" or "gaussian".
+#' @return A list containing detailed information on the fitted parametric
+#' model. The \code{summary()} function can be used to see further details.
 #'
-#' @param boot Should the bootstrap be implemented to obtain standard errors
-#'  and 90\% and 95\% confidence intervals for different features of the
-#'  distribution? Default is \code{FALSE}.
-#'
-#' @param Bboot The number of bootstrap replications. Default is 200.
-#'
-#' @param pgbar Should a progress bar be displayed while the bootstrap is
-#'  ongoing? Default is \code{FALSE}.
-#'
-#' @details The \code{parfitml} routine provides point estimates and confidence
-#' intervals (if bootstrap is called) for different features of the chosen
-#' parametric distribution. The following features are considered: mean,
-#' variance, standard deviation, and 1\%, 5\%, 25\%, 50\%, 75\%, 95\% and 99\%
-#' percentiles. Maximum likelihood estimates of model parameters are computed
-#' with the \code{optim} function with the Nelder and Mead (1965) method.
-#' Initial parameter values are obtained via a moment matching approach, where
-#' the theoretical mean and variance of the chosen parametric model are matched
-#' with the empirical mean and variance of the midpoint imputed values computed
-#' from the interval-censored observations.
-#'
-#' @return A list containing parameter estimates, feature estimates, AIC, BIC,
-#' and convergence checks.
-#'
-#' @author Oswaldo Gressani \email{oswaldo_gressani@hotmail.fr} and
-#'  Dongxuan Chen.
+#' @author Oswaldo Gressani \email{oswaldo_gressani@hotmail.fr} (original
+#' code writing and implementation) and
+#' Dongxuan Chen (code editing and testing).
 #'
 #' @references Nelder, J. A. and Mead, R. (1965). A simplex algorithm for
 #' function minimization. \emph{Computer Journal}, \strong{7}, 308–313.
 #'
-#' @examples
-#' # Add examples here
-#'
 #' @export
 
-parfitml <- function(x, family = "gamma", boot = FALSE, Bboot = 200, pgbar = FALSE) {
-
-  #--- Extract info from data
-  n <- nrow(x)                                  # sample size
-  model <- logliksingle(x = x, family = family) # parametric model features
-
-  #--- Maximum likelihood estimation
-  maxlik <- function(x){
-    uparinit <- midmom(x = x, family = family)  # Initial values via moments
-    ml <- stats::optim(par = uparinit, fn = model$ll, x = x,
-                       control = list(fnscale = -1))
-    mlconv <- ml$convergence
-    mlpar <- model$originsc(ml$par)
-    epifeat <- model$features(mlpar)
-    npar <- length(mlpar)
-    llmax <- model$ll(ml$par, x)
-    aic <- 2 * (npar - llmax)
-    bic <- npar * log(n) - 2 * llmax
-    outlist <- list(family = family, parspace = model$parspace, mlpar = mlpar,
-                    mlconv = mlconv, aic = aic, bic = bic, epifeat = epifeat)
-    return(outlist)
-  }
-  mle <- maxlik(x)
-
-  #--- Nonparametric bootstrap
-  if(isTRUE(boot)) {
-    sstatsboot <- model$sstats
-    convboot <- 0
-    rowid <- seq_len(n)
-    if(isTRUE(pgbar)) {
-    cat(paste0("Nonparametric bootstrap (MLE-", family, " family) \n",
-               "Bootstrap sample: B=", Bboot, " \n",
-               "Sample size: n=", n," \n"))
+parfitml <- function(x, family, Bboot = 1000, pgbar = TRUE){
+  tic <- proc.time()
+  m <- kerlikelihood(x = x, family = family)  # Model specification
+  n <- nrow(x)
+  np <- m$npars
+  v0 <- parfitmom(x = x, family = family, incheck = FALSE)$mompoint_ub
+  maxs <- list(fnscale = -1)
+  mle <- stats::optim(par = v0, fn = m$loglik, x = x, control = maxs)
+  mlepar <- as.numeric(m$originscale(mle$par))
+  mlefeat <- as.numeric(kerfeats(family = family, par = mlepar))
+  mleconv <- (mle$convergence == 0)
+  if(isTRUE(pgbar)) {
+    cat(paste0("Fitting parametric model (", family, ") \n",
+               "Bootstrap progress (Bboot=", Bboot, "): \n"))
     progbar <- utils::txtProgressBar(min = 1, max = Bboot, initial = 1,
                                      style = 3, char ="*")
-    }
-    for(b in 1:Bboot){
-      bootrow <- sample(rowid, size = n, replace = TRUE)
-      xboot <- x[bootrow, ]
-      mleboot <- maxlik(xboot)
-      if(mleboot$mlconv == 0) convboot <- convboot + 1
-      sstatsboot[b, ] <- mleboot$epifeat
-      if(isTRUE(pgbar)) utils::setTxtProgressBar(progbar, b)
-    }
-    if(isTRUE(pgbar)) close(progbar)
-    se <- apply(sstatsboot, 2, stats::sd)
-    CI90L <- apply(sstatsboot, 2, stats::quantile, prob = 0.05)
-    CI90R <- apply(sstatsboot, 2, stats::quantile, prob = 0.95)
-    CI95L <- apply(sstatsboot, 2, stats::quantile, prob = 0.025)
-    CI95R <- apply(sstatsboot, 2, stats::quantile, prob = 0.975)
-    epifeatboot <- t(rbind(mle$epifeat, se, CI90L, CI90R, CI95L, CI95R))
-    colnames(epifeatboot) <- c("estim", "se", "CI90L", "CI90R",
-                               "CI95L", "CI95R")
-    epifeatboot <- as.data.frame(epifeatboot)
-  } else{
-    epifeatboot <- NULL
-    Bboot <- NULL
-    convboot <- NULL
   }
+  pboot <- matrix(0, nrow = Bboot, ncol = np)
+  fboot <- matrix(0, nrow = Bboot, ncol = length(mlefeat))
+  bootdiscard <- 0
+  for(b in 1:Bboot) {
+    bootbconv <- 1
+    while (bootbconv != 0) {
+      xb <- kerboot(x)
+      mleboot <- stats::optim(par = mle$par, fn = m$loglik, x = xb,
+                              control = maxs)
+      if (mleboot$convergence == 0) {
+        bootbconv <- 0
+      } else {
+        bootdiscard <- bootdiscard + 1
+      }
+    }
+    mleparboot <- as.numeric(m$originscale(mleboot$par))
+    pboot[b,] <- mleparboot
+    fboot[b, ] <- as.numeric(kerfeats(family = family, par = mleparboot))
+    if(isTRUE(pgbar)) utils::setTxtProgressBar(progbar, b)
+  }
+  if(isTRUE(pgbar)) close(progbar)
+  parfit <- stats::setNames(vector("list", np), paste0("par", 1:np))
+  feats <- c("mean", "var", "sd", paste0("q", c(1, 5, 25, 50, 75, 95, 99)))
+  delayfit <- stats::setNames(vector("list", length(feats)), feats)
+  parfit <- kerstats(slist = parfit, pestim = mlepar, boot = pboot)
+  delayfit <- kerstats(slist = delayfit, pestim = mlefeat, boot = fboot)
+  aic <- 2 * (np - mle$value)
+  bic <- np * log(n) - 2 * mle$value
+  toc <- proc.time() - tic
 
-  #--- Routine output
-  outlist <- c(mle, list(Bboot = Bboot, convboot = convboot,
-                         epifeatboot = epifeatboot))
-  return(outlist)
+  o <- c(m[!names(m) %in% c("loglik", "originscale")],
+         list(n = n, Bboot = Bboot, parfit = parfit, delayfit = delayfit,
+              aic = aic, bic = bic, mleconv = mleconv, bootdiscard = bootdiscard,
+              elapsed = toc[3]))
+  attr(o, "class") <- "parfitml"
+  return(o)
 }
+
+
+

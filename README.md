@@ -4,12 +4,12 @@ Oswaldo Gressani (<oswaldo.gressani@uhasselt.be>)
 
 **EpiDelays** is a package that can be used to fit epidemiological delay
 distributions to interval-censored data. The `parfitml` routine can be
-used to fit classic delay distributions (`gamma`, `lognormal`,
-`weibull`, `gaussian`) via maximum likelihood. The `nonparfit` routine
-uses the nonparametric methodology developed by Gressani and Hens (2025)
-to obtain estimates of key epidemiological delay features without
-imposing any parametric assumptions. For both routines, the
-nonparametric bootstrap can be implemented to compute standard errors
+used to fit parametric delay distributions (`gamma`, `lognormal`,
+`weibull`, `gaussian`, `skewnorm`) via maximum likelihood. The
+`nonparfit` routine uses the nonparametric methodology developed by
+Gressani and Hens (2025) to obtain estimates of key epidemiological
+delay features without imposing any parametric assumptions. For both
+routines, the nonparametric bootstrap is used to compute standard errors
 and confidence intervals for often reported epidemiological delay
 features.
 
@@ -24,8 +24,8 @@ will be added in future releases.
 
 #### Package version
 
-This is version 0.0.2 - “Parametric wave 1”.<br> Release date:
-2025-12-14 (December 14, 2025).
+This is version 0.0.3 - “Parametric wave 2”.<br> Release date:
+2026-04-07 (April 7, 2026).
 
 #### Authors and contributors
 

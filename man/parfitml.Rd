@@ -2,55 +2,61 @@
 % Please edit documentation in R/parfitml.R
 \name{parfitml}
 \alias{parfitml}
-\title{Parametric estimation with maximum likelihood for interval-censored data}
+\title{Parametric estimation with maximum likelihood for single or doubly
+interval-censored data}
 \usage{
-parfitml(x, family = "gamma", boot = FALSE, Bboot = 200, pgbar = FALSE)
+parfitml(x, family, Bboot = 1000, pgbar = TRUE)
 }
 \arguments{
-\item{x}{A data frame with n rows and two columns indicating the left and
-right bound, respectively, of the interval-censored observations. \code{NA}
-values are not allowed.}
+\item{x}{A data frame with either two columns named \code{xl} and \code{xr},
+or four columns named \code{x1l}, \code{x1r}, \code{x2l}, \code{x2r}. See
+description for constraints imposed on the columns.}
 
-\item{family}{The name of the parametric family used in modeling the data.
-Must be one of: "gamma", "lognormal", "weibull" or "gaussian".}
+\item{family}{A character string specifying the name of the parametric
+family. Can be one of the following: \code{"gaussian"}, \code{"gamma"},
+\code{"lognormal"}, \code{"weibull"}, or \code{"skewnorm"}.}
 
-\item{boot}{Should the bootstrap be implemented to obtain standard errors
-and 90\% and 95\% confidence intervals for different features of the
-distribution? Default is \code{FALSE}.}
+\item{Bboot}{Number of bootstrap samples. Default is 1000.}
 
-\item{Bboot}{The number of bootstrap replications. Default is 200.}
-
-\item{pgbar}{Should a progress bar be displayed while the bootstrap is
-ongoing? Default is \code{FALSE}.}
+\item{pgbar}{Should a progress bar be displayed in console? Default is TRUE.}
 }
 \value{
-A list containing parameter estimates, feature estimates, AIC, BIC,
-and convergence checks.
+A list containing detailed information on the fitted parametric
+model. The \code{summary()} function can be used to see further details.
 }
 \description{
-This routine fits commonly used parametric models to interval-censored data.
+Fit parametric models to single or doubly
+interval-censored data with maximum likelihood. Data input must be a
+data frame \code{x} with either two columns (named \code{xl} and \code{xr})
+representing the left and right bound, respectively, of the delay variable,
+or four columns (named \code{x1l}, \code{x1r}, \code{x2l}, \code{x2r})
+representing the left and right bound, respectively, of the primary and
+secondary events of the delay variable. The naming convention of the data
+columns is strict and different namings are not allowed. When data frame
+\code{x} has two columns, a single interval-censored likelihood function is
+used. Note that the left bound should be strictly smaller than the right
+bound, i.e. \code{xl < xr} must be satisfied for all rows in \code{x}.
+When data frame \code{x} has four columns, a doubly interval-censored
+likelihood function is used. In that case \code{x1l < x1r} and
+\code{x2l < x2r} must hold for all rows in \code{x}. \code{NA} values are
+not allowed in data frame \code{x}.
 }
 \details{
-The \code{parfitml} routine provides point estimates and confidence
-intervals (if bootstrap is called) for different features of the chosen
-parametric distribution. The following features are considered: mean,
-variance, standard deviation, and 1\%, 5\%, 25\%, 50\%, 75\%, 95\% and 99\%
-percentiles. Maximum likelihood estimates of model parameters are computed
-with the \code{optim} function with the Nelder and Mead (1965) method.
-Initial parameter values are obtained via a moment matching approach, where
-the theoretical mean and variance of the chosen parametric model are matched
-with the empirical mean and variance of the midpoint imputed values computed
-from the interval-censored observations.
-}
-\examples{
-# Add examples here
-
+This routine computes maximum likelihood estimates of model
+parameters as well as different features of the fitted delay variable
+distribution (mean, variance, standard deviation and selected quantiles). The
+nonparametric bootstrap is used to compute standard errors and confidence
+intervals for the model parameters and different features. By default, the
+number of bootstrap samples is fixed at 1000. Maximum likelihood estimates
+are computed with the \code{optim} function using the Nelder and Mead (1965)
+method. Initial parameter values are computed via a moment matching approach.
 }
 \references{
 Nelder, J. A. and Mead, R. (1965). A simplex algorithm for
 function minimization. \emph{Computer Journal}, \strong{7}, 308–313.
 }
 \author{
-Oswaldo Gressani \email{oswaldo_gressani@hotmail.fr} and
- Dongxuan Chen.
+Oswaldo Gressani \email{oswaldo_gressani@hotmail.fr} (original
+code writing and implementation) and
+Dongxuan Chen (code editing and testing).
 }

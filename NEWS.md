@@ -13,5 +13,14 @@
 * Version name: "Parametric wave 1".
 * Release date: 2025-12-14 (December 14, 2025)
 
+## Version 0.0.3
+
+* Improved code for parfitml and nonparfit.
+* Added likelihood kernel function for modularity.
+* Added Skew-Normal distribution.
+* Added doubly interval-censored likelihood functions.
+* S3 methods (summary) for parfitml and nonparfit.
+* Release date: 2026-04-07 (April 7, 2026)
+
 
 

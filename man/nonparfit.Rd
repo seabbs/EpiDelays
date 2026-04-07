@@ -2,27 +2,22 @@
 % Please edit documentation in R/nonparfit.R
 \name{nonparfit}
 \alias{nonparfit}
-\title{Nonparametric estimation for interval-censored data based on uniform mixtures}
+\title{Nonparametric estimation for single interval-censored data based on uniform mixtures}
 \usage{
-nonparfit(x, boot = FALSE, Bboot = 200, pgbar = FALSE)
+nonparfit(x, Bboot = 1000, pgbar = TRUE)
 }
 \arguments{
 \item{x}{A data frame with n rows and two columns indicating the left and
 right bound, respectively, of the interval-censored observations. \code{NA}
 values are not allowed.}
 
-\item{boot}{Should the nonparametric bootstrap be implemented to obtain
-standard errors and 90\% and 95\% confidence intervals for different
-features of the distribution? Default is \code{FALSE}.}
+\item{Bboot}{Number of bootstrap samples. Default is 1000.}
 
-\item{Bboot}{The number of bootstrap replications. Default is 200.}
-
-\item{pgbar}{Should a progress bar be displayed while the bootstrap is
-ongoing? Default is \code{FALSE}.}
+\item{pgbar}{Should a progress bar be displayed in console? Default is TRUE.}
 }
 \value{
-A list containing different feature estimates of the underlying
- distribution.
+A list containing detailed information on the fitted nonparametric
+model. The \code{summary()} function can be used to see further details.
 }
 \description{
 This routine uses a nonparametric methodology based on uniform mixtures
@@ -30,9 +25,13 @@ This routine uses a nonparametric methodology based on uniform mixtures
 interval-censored data. It is particularly useful in an epidemiological delay
 modeling context to extract information from coarse delay data without
 imposing any distributional assumption on the underlying data generating
-mechanism. The routine requires as main input a data frame with two columns
-indicating the left and right bound, respectively, of the interval-censored
-observations. It provides point estimates and confidence intervals
+mechanism. The routine requires as main input a data frame \code{x} with two
+columns (named \code{xl} and \code{xr}) indicating the left and right bound,
+respectively, of the interval-censored observations. The naming convention of
+data frame columns is strict and different namings are not allowed.
+Note that the left bound should be strictly smaller than the right
+bound, i.e. \code{xl < xr} must be satisfied for all rows in \code{x}.
+The routine computes point estimates and confidence intervals
 (via the nonparametric bootstrap) for different features of the underlying
 random variable being modeled. The following features are considered: mean,
 variance, standard deviation, and 1\%, 5\%, 25\%, 50\%, 75\%, 95\% and 99\%
