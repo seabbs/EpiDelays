@@ -7,3 +7,6 @@
 ^primarycensored$
 ^CLAUDE\.md$
 ^notes$
+^\.github$
+^\.lintr$
+^\.claude$
