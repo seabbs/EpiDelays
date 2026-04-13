@@ -162,19 +162,6 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
       }
     }
   }
-  # CDF wrapper exposing pskewnorm with a primarycensored-friendly signature.
-  # pskewnorm uses Owen's T, which can produce values a hair outside [0, 1]
-  # in extreme parameter regions visited during optim. Clamp so
-  # primarycensored::check_pdist does not reject the wrapper on numerical
-  # noise, and enforce monotone non-decreasing output on sorted inputs so
-  # check_pdist's diff >= 0 probe passes.
-  pskewnorm_cdf <- function(q, location, scale, slant) {
-    v <- pskewnorm(x = q, par1 = location, par2 = scale, par3 = slant)
-    v <- pmin(1, pmax(0, v))
-    ord <- order(q)
-    v[ord] <- cummax(v[ord])
-    v
-  }
   # Helper: sum log-contributions for the single-interval (nc == 2) branch,
   # applying the truncation correction when L > 0 or D < Inf. Reduces to
   # sum(log(Fr - Fl)) in the default case, so the pre-existing code path is
@@ -303,15 +290,19 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
     }
   }
   if (family == "gaussian") {
+    # Gaussian and skewnorm are interpreted as zero-truncated on the
+    # non-negative half-line. The truncated wrapper becomes the underlying
+    # delay CDF, so every code path (single-interval, mc, ni) routes through
+    # the same ptruncnorm_nonneg without a bespoke F_cens(0) correction.
     if(nc == 2) {
       loglik <- function(v, x) {
         # v: unbounded parameter
         par1 <- v[1]
         par2 <- exp(v[2])
-        Fl  <- stats::pnorm(q = x$xl, mean = par1, sd = par2)
-        Fr  <- stats::pnorm(q = x$xr, mean = par1, sd = par2)
-        FL  <- stats::pnorm(q = L, mean = par1, sd = par2)
-        FD  <- stats::pnorm(q = D, mean = par1, sd = par2)
+        Fl  <- ptruncnorm_nonneg(q = x$xl, mean = par1, sd = par2)
+        Fr  <- ptruncnorm_nonneg(q = x$xr, mean = par1, sd = par2)
+        FL  <- ptruncnorm_nonneg(q = L, mean = par1, sd = par2)
+        FD  <- ptruncnorm_nonneg(q = D, mean = par1, sd = par2)
         single_interval_sum(Fl, Fr, FL, FD)
       }
     } else if(nc == 4) {
@@ -324,16 +315,16 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
           z <- 0
           for(i in 1:n) {
             x1s <- stats::runif(n = M, min = x$x1l[i], max = x$x1r[i])
-            Fl  <- stats::pnorm(q = x$x2l[i] - x1s , mean = par1, sd = par2)
-            Fr  <- stats::pnorm(q = x$x2r[i] - x1s , mean = par1, sd = par2)
+            Fl  <- ptruncnorm_nonneg(q = x$x2l[i] - x1s, mean = par1, sd = par2)
+            Fr  <- ptruncnorm_nonneg(q = x$x2r[i] - x1s, mean = par1, sd = par2)
             z <- z + log(mean(Fr - Fl)) -
-              mc_row_correction(x1s, stats::pnorm, pars)
+              mc_row_correction(x1s, ptruncnorm_nonneg, pars)
           }
           z
         }
       } else if(likapprox == "ni") {
         loglik <- build_pc_loglik(
-          pdist = stats::pnorm,
+          pdist = ptruncnorm_nonneg,
           pars_fn = function(v) list(mean = v[1], sd = exp(v[2]))
         )
       }
@@ -350,10 +341,18 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
         par1 <- v[1]
         par2 <- exp(v[2])
         par3 <- v[3]
-        Fl <- pskewnorm(x = x$xl, par1 = par1, par2 = par2, par3 = par3)
-        Fr <- pskewnorm(x = x$xr, par1 = par1, par2 = par2, par3 = par3)
-        FL <- pskewnorm(x = L, par1 = par1, par2 = par2, par3 = par3)
-        FD <- pskewnorm(x = D, par1 = par1, par2 = par2, par3 = par3)
+        Fl <- ptruncskewnorm_nonneg(
+          q = x$xl, location = par1, scale = par2, slant = par3
+        )
+        Fr <- ptruncskewnorm_nonneg(
+          q = x$xr, location = par1, scale = par2, slant = par3
+        )
+        FL <- ptruncskewnorm_nonneg(
+          q = L, location = par1, scale = par2, slant = par3
+        )
+        FD <- ptruncskewnorm_nonneg(
+          q = D, location = par1, scale = par2, slant = par3
+        )
         single_interval_sum(Fl, Fr, FL, FD)
       }
     } else if(nc == 4) {
@@ -367,16 +366,22 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
           z <- 0
           for(i in 1:n) {
             x1s <- stats::runif(n = M, min = x$x1l[i], max = x$x1r[i])
-            Fl <- pskewnorm(x = x$x2l[i] - x1s, par1 = par1, par2 = par2, par3 = par3)
-            Fr <- pskewnorm(x = x$x2r[i] - x1s, par1 = par1, par2 = par2, par3 = par3)
+            Fl <- ptruncskewnorm_nonneg(
+              q = x$x2l[i] - x1s,
+              location = par1, scale = par2, slant = par3
+            )
+            Fr <- ptruncskewnorm_nonneg(
+              q = x$x2r[i] - x1s,
+              location = par1, scale = par2, slant = par3
+            )
             z <- z + log(mean(Fr - Fl)) -
-              mc_row_correction(x1s, pskewnorm_cdf, pars)
+              mc_row_correction(x1s, ptruncskewnorm_nonneg, pars)
           }
           z
         }
       } else if(likapprox == "ni") {
         loglik <- build_pc_loglik(
-          pdist = pskewnorm_cdf,
+          pdist = ptruncskewnorm_nonneg,
           pars_fn = function(v) list(
             location = v[1], scale = exp(v[2]), slant = v[3]
           )
