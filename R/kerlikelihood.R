@@ -38,6 +38,15 @@
 #' interval-censored data. Default is \code{"ni"} for numerical integration.
 #' Another possibility is \code{"mc"} for crude Monte Carlo sampling with 1000
 #' samples.
+#' @param engine Backend used to evaluate the inner integral of the doubly
+#' interval-censored likelihood. Default is \code{"integrate"}, which preserves
+#' the original \code{stats::integrate()} implementation. When set to
+#' \code{"primarycensored"}, the inner integral is evaluated via
+#' \code{primarycensored::pprimarycensored()}. The \code{primarycensored}
+#' engine is only honoured for doubly interval-censored data with
+#' \code{likapprox = "ni"}; for single interval-censored data or the
+#' \code{"mc"} approximation the argument is silently ignored and the
+#' integrate-based path is used.
 #'
 #' @return A list containing information on the chosen parametric family,
 #' the log-likelihood function, a function that transforms back the parameters
@@ -48,10 +57,12 @@
 #'
 #' @keywords internal
 
-kerlikelihood <- function(x, family, likapprox = "ni") {
+kerlikelihood <- function(x, family, likapprox = "ni",
+                          engine = c("integrate", "primarycensored")) {
   if(!(likapprox %in% c("ni", "mc"))) {
     stop("likapprox should either be ni or mc")
   }
+  engine <- match.arg(engine)
   # Input checks
   dfck <- kerdata_check(x = x) # data frame check
     if (dfck$result == "fail") {
@@ -77,6 +88,40 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
     censtype <- "double"
     logdx1 <- log(x$x1r - x$x1l)
     M <- 1000 #  Monte carlo samples for doubly interval-censored likelihood
+  }
+  # The primarycensored engine only wires up the doubly interval-censored ni
+  # branch. Fall back silently to the integrate-based path otherwise.
+  use_primarycensored <- isTRUE(engine == "primarycensored" &&
+                                  nc == 4 && likapprox == "ni")
+  # CDF wrapper exposing pskewnorm with a primarycensored-friendly signature.
+  # The wrapper is defined locally so it only exists when the primarycensored
+  # engine is requested and kerlikelihood never touches primarycensored
+  # otherwise.
+  pskewnorm_cdf <- function(q, location, scale, slant) {
+    pskewnorm(x = q, par1 = location, par2 = scale, par3 = slant)
+  }
+  # Shared loglik builder for the primarycensored engine: given a CDF and a
+  # function that extracts a named parameter list from `v`, returns a closure
+  # that sums log(F_cens(x2r - x1l) - F_cens(x2l - x1l)) across rows with
+  # pwindow = x1r - x1l.
+  build_pc_loglik <- function(pdist, pars_fn) {
+    force(pdist)
+    force(pars_fn)
+    function(v, x) {
+      pars <- pars_fn(v)
+      z <- 0
+      for (i in seq_len(n)) {
+        pwindow <- x$x1r[i] - x$x1l[i]
+        ql <- x$x2l[i] - x$x1l[i]
+        qr <- x$x2r[i] - x$x1l[i]
+        cdfs <- do.call(
+          primarycensored::pprimarycensored,
+          c(list(q = c(ql, qr), pdist = pdist, pwindow = pwindow), pars)
+        )
+        z <- z + log(cdfs[2] - cdfs[1])
+      }
+      z
+    }
   }
   if (family == "gaussian") {
     if(nc == 2) {
@@ -105,6 +150,12 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
           z
         }
       } else if(likapprox == "ni") {
+        if (use_primarycensored) {
+          loglik <- build_pc_loglik(
+            pdist = stats::pnorm,
+            pars_fn = function(v) list(mean = v[1], sd = exp(v[2]))
+          )
+        } else {
         loglik <- function(v, x) {
           # v: unbounded parameter
           par1 <- v[1]
@@ -121,6 +172,7 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
             z <- z + logint - logdx1[i]
           }
           z
+        }
         }
       }
     }
@@ -158,6 +210,14 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
           z
         }
       } else if(likapprox == "ni") {
+        if (use_primarycensored) {
+          loglik <- build_pc_loglik(
+            pdist = pskewnorm_cdf,
+            pars_fn = function(v) list(
+              location = v[1], scale = exp(v[2]), slant = v[3]
+            )
+          )
+        } else {
         loglik <- function(v, x) {
           # v: unbounded parameter
           par1 <- v[1]
@@ -175,6 +235,7 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
             z <- z + logint - logdx1[i]
           }
           z
+        }
         }
       }
     }
@@ -210,6 +271,12 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
           z
         }
       } else if(likapprox == "ni") {
+        if (use_primarycensored) {
+          loglik <- build_pc_loglik(
+            pdist = stats::pgamma,
+            pars_fn = function(v) list(shape = exp(v[1]), rate = exp(v[2]))
+          )
+        } else {
         loglik <- function(v, x) {
           # v: unbounded parameter
           par1 <- exp(v[1])
@@ -226,6 +293,7 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
             z <- z + logint - logdx1[i]
           }
           z
+        }
         }
       }
     }
@@ -261,6 +329,12 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
           z
         }
       } else if(likapprox == "ni") {
+        if (use_primarycensored) {
+          loglik <- build_pc_loglik(
+            pdist = stats::plnorm,
+            pars_fn = function(v) list(meanlog = v[1], sdlog = exp(v[2]))
+          )
+        } else {
         loglik <- function(v, x) {
           # v: unbounded parameter
           par1 <- v[1]
@@ -277,6 +351,7 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
             z <- z + logint - logdx1[i]
           }
           z
+        }
         }
       }
     }
@@ -312,6 +387,12 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
           z
         }
       } else if(likapprox == "ni") {
+        if (use_primarycensored) {
+          loglik <- build_pc_loglik(
+            pdist = stats::pweibull,
+            pars_fn = function(v) list(shape = exp(v[1]), scale = exp(v[2]))
+          )
+        } else {
         loglik <- function(v, x) {
           # v: unbounded parameter
           par1 <- exp(v[1])
@@ -328,6 +409,7 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
             z <- z + logint - logdx1[i]
           }
           z
+        }
         }
       }
     }
