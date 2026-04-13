@@ -35,6 +35,13 @@
 #' \code{"lognormal"}, \code{"weibull"}, or \code{"skewnorm"}.
 #' @param Bboot Number of bootstrap samples. Default is 1000.
 #' @param pgbar Should a progress bar be displayed in console? Default is TRUE.
+#' @param dprimary Primary event density function. See
+#' \code{\link{kerlikelihood}} for details. Defaults to \code{stats::dunif}
+#' (uniform primary onset), which reproduces the behaviour of earlier
+#' EpiDelays versions. Non-uniform choices include
+#' \code{primarycensored::dexpgrowth}.
+#' @param dprimary_args A named list of additional arguments passed to
+#' \code{dprimary}. Defaults to an empty list.
 #'
 #' @return A list containing detailed information on the fitted parametric
 #' model. The \code{summary()} function can be used to see further details.
@@ -48,11 +55,18 @@
 #'
 #' @export
 
-parfitml <- function(x, family, Bboot = 1000, pgbar = TRUE){
+parfitml <- function(x, family, Bboot = 1000, pgbar = TRUE,
+                     dprimary = stats::dunif, dprimary_args = list()){
   tic <- proc.time()
-  m <- kerlikelihood(x = x, family = family)  # Model specification
+  m <- kerlikelihood(x = x, family = family,
+                     dprimary = dprimary,
+                     dprimary_args = dprimary_args) # Model specification
   n <- nrow(x)
   np <- m$npars
+  # parfitmom ignores dprimary; the moment-matching seed is known-biased
+  # under non-uniform primary but Nelder-Mead recovers from moderate bias
+  # and keeping MoM primary-unaware avoids family/primary-specific
+  # corrections that would add complexity disproportionate to the benefit.
   v0 <- parfitmom(x = x, family = family, incheck = FALSE)$mompoint_ub
   maxs <- list(fnscale = -1)
   mle <- stats::optim(par = v0, fn = m$loglik, x = x, control = maxs)

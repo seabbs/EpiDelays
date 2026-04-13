@@ -5,7 +5,14 @@
 \title{Parametric estimation with maximum likelihood for single or doubly
 interval-censored data}
 \usage{
-parfitml(x, family, Bboot = 1000, pgbar = TRUE)
+parfitml(
+  x,
+  family,
+  Bboot = 1000,
+  pgbar = TRUE,
+  dprimary = stats::dunif,
+  dprimary_args = list()
+)
 }
 \arguments{
 \item{x}{A data frame with either two columns named \code{xl} and \code{xr},
@@ -19,6 +26,15 @@ family. Can be one of the following: \code{"gaussian"}, \code{"gamma"},
 \item{Bboot}{Number of bootstrap samples. Default is 1000.}
 
 \item{pgbar}{Should a progress bar be displayed in console? Default is TRUE.}
+
+\item{dprimary}{Primary event density function. See
+\code{\link{kerlikelihood}} for details. Defaults to \code{stats::dunif}
+(uniform primary onset), which reproduces the behaviour of earlier
+EpiDelays versions. Non-uniform choices include
+\code{primarycensored::dexpgrowth}.}
+
+\item{dprimary_args}{A named list of additional arguments passed to
+\code{dprimary}. Defaults to an empty list.}
 }
 \value{
 A list containing detailed information on the fitted parametric

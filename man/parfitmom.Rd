@@ -4,7 +4,13 @@
 \alias{parfitmom}
 \title{Method of moments for single or doubly interval-censored data}
 \usage{
-parfitmom(x, family, incheck = TRUE)
+parfitmom(
+  x,
+  family,
+  incheck = TRUE,
+  dprimary = stats::dunif,
+  dprimary_args = list()
+)
 }
 \arguments{
 \item{x}{A data frame with either two columns named \code{xl} and \code{xr},
@@ -18,6 +24,13 @@ family. Can be one of the following: \code{"gaussian"}, \code{"gamma"},
 \item{incheck}{Should internal checks be implemented to check that data
 frame \code{x} is in correct format and that \code{family} has been
 correctly specified by the user? Default is TRUE.}
+
+\item{dprimary}{Ignored. Accepted for signature consistency with
+\code{\link{parfitml}} so the same argument set can be threaded through
+both routines. Moment matching assumes uniform primary onset.}
+
+\item{dprimary_args}{Ignored. Accepted for signature consistency with
+\code{\link{parfitml}}.}
 }
 \value{
 A list containing information on the chosen parametric family and

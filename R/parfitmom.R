@@ -29,6 +29,11 @@
 #' @param incheck Should internal checks be implemented to check that data
 #' frame \code{x} is in correct format and that \code{family} has been
 #' correctly specified by the user? Default is TRUE.
+#' @param dprimary Ignored. Accepted for signature consistency with
+#' \code{\link{parfitml}} so the same argument set can be threaded through
+#' both routines. Moment matching assumes uniform primary onset.
+#' @param dprimary_args Ignored. Accepted for signature consistency with
+#' \code{\link{parfitml}}.
 #'
 #' @return A list containing information on the chosen parametric family and
 #' method of moments (MoM) estimates of the model parameters. The value
@@ -40,7 +45,8 @@
 #'
 #' @export
 
-parfitmom <- function(x, family, incheck = TRUE){
+parfitmom <- function(x, family, incheck = TRUE,
+                      dprimary = stats::dunif, dprimary_args = list()){
   if(!is.logical(incheck)) {
     stop("incheck must be either TRUE or FALSE")
   } else if (isTRUE(incheck)) {

@@ -40,20 +40,50 @@
 #' interval-censored data. Default is \code{"ni"}, which delegates evaluation
 #' to \code{primarycensored::dprimarycensored()}. Another possibility is
 #' \code{"mc"} for crude Monte Carlo sampling with 1000 samples.
+#' @param dprimary Primary event density function. Used only when \code{x} has
+#' four columns (doubly interval-censored data) and \code{likapprox = "ni"}.
+#' Must take a vector \code{x} and the arguments \code{min} and \code{max},
+#' return a density normalised to integrate to 1 on \code{[min, max]}, and be
+#' compatible with \code{primarycensored::dprimarycensored()}. Defaults to
+#' \code{stats::dunif} (uniform primary onset within the observation window),
+#' which reproduces the behaviour of earlier EpiDelays versions. Non-uniform
+#' choices include \code{primarycensored::dexpgrowth} for exponential growth
+#' during an outbreak. Ignored when \code{x} has two columns (single
+#' interval-censored data) but must equal the default in that case.
+#' @param dprimary_args A named list of additional arguments passed to
+#' \code{dprimary}, mirroring the \code{dprimary_args} argument of
+#' \code{primarycensored::dprimarycensored()}. Example: \code{list(r = 0.1)}
+#' for \code{primarycensored::dexpgrowth}. Defaults to an empty list. Must be
+#' empty unless \code{x} has four columns and \code{likapprox = "ni"}.
 #'
 #' @return A list containing information on the chosen parametric family,
 #' the log-likelihood function, a function that transforms back the parameters
-#' in their original scale, the censoring type and the approximation of the
-#' likelihood function used in case of doubly interval-censored data.
+#' in their original scale, the censoring type, the approximation of the
+#' likelihood function used in case of doubly interval-censored data, and the
+#' primary event density settings.
 #'
 #' @author Oswaldo Gressani \email{oswaldo_gressani@hotmail.fr}
 #'
 #' @keywords internal
 
-kerlikelihood <- function(x, family, likapprox = "ni") {
+kerlikelihood <- function(x, family, likapprox = "ni",
+                          dprimary = stats::dunif,
+                          dprimary_args = list()) {
   if(!(likapprox %in% c("ni", "mc"))) {
     stop("likapprox should either be ni or mc")
   }
+  # Validate dprimary / dprimary_args shape. Identity-check against the
+  # default so users writing `dprimary = stats::dunif` explicitly still hit
+  # the uniform-primary fast path.
+  if(!is.function(dprimary)) {
+    stop("dprimary must be a function")
+  }
+  if(!is.list(dprimary_args) ||
+     (length(dprimary_args) > 0 && is.null(names(dprimary_args)))) {
+    stop("dprimary_args must be a named list")
+  }
+  dprimary_default <- identical(dprimary, stats::dunif) &&
+    length(dprimary_args) == 0
   # Input checks
   dfck <- kerdata_check(x = x) # data frame check
     if (dfck$result == "fail") {
@@ -75,9 +105,25 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
   if(nc == 2) {
     censtype <- "single"
     likapprox <- "None"
+    # Non-uniform primary has no meaning without a primary event window.
+    if(!dprimary_default) {
+      stop(
+        "dprimary only applies to doubly interval-censored data (four ",
+        "columns); x has two columns so no primary event window is ",
+        "modelled"
+      )
+    }
   } else if (nc == 4) {
     censtype <- "double"
     M <- 1000 #  Monte carlo samples for doubly interval-censored likelihood
+    # The mc branch samples primary onsets from a uniform; a non-uniform
+    # dprimary would silently bias the Monte Carlo estimate of F_cens.
+    if(likapprox == "mc" && !dprimary_default) {
+      stop(
+        "likapprox = \"mc\" does not support non-uniform dprimary; ",
+        "use likapprox = \"ni\" (the default)"
+      )
+    }
   }
   # CDF wrapper exposing pskewnorm with a primarycensored-friendly signature.
   pskewnorm_cdf <- function(q, location, scale, slant) {
@@ -91,6 +137,10 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
   build_pc_loglik <- function(pdist, pars_fn) {
     force(pdist)
     force(pars_fn)
+    # Close over the primary event density so parfitml() and its bootstrap
+    # loop automatically re-use whatever dprimary the user passed in.
+    dprimary_local <- dprimary
+    dprimary_args_local <- dprimary_args
     function(v, x) {
       pars <- pars_fn(v)
       pwindows <- x$x1r - x$x1l
@@ -108,7 +158,10 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
           c(
             list(
               x = lowers[idx], pdist = pdist,
-              pwindow = pw, swindow = sw, log = TRUE
+              pwindow = pw, swindow = sw,
+              dprimary = dprimary_local,
+              dprimary_args = dprimary_args_local,
+              log = TRUE
             ),
             pars
           )
@@ -314,6 +367,7 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
     }
   }
   o <- c(famdesc, list(loglik = loglik, originscale = originscale,
-           censtype = censtype, likapprox = likapprox))
+           censtype = censtype, likapprox = likapprox,
+           dprimary = dprimary, dprimary_args = dprimary_args))
   return(o)
 }
