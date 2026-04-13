@@ -109,16 +109,27 @@ kerlikelihood <- function(x, family, likapprox = "ni",
     force(pars_fn)
     function(v, x) {
       pars <- pars_fn(v)
+      pwindows <- x$x1r - x$x1l
+      swindows <- x$x2r - x$x2l
+      lowers <- x$x2l - x$x1l
+      groups <- split(
+        seq_along(lowers), list(pwindows, swindows), drop = TRUE
+      )
       z <- 0
-      for (i in seq_len(n)) {
-        pwindow <- x$x1r[i] - x$x1l[i]
-        ql <- x$x2l[i] - x$x1l[i]
-        qr <- x$x2r[i] - x$x1l[i]
-        cdfs <- do.call(
-          primarycensored::pprimarycensored,
-          c(list(q = c(ql, qr), pdist = pdist, pwindow = pwindow), pars)
+      for (idx in groups) {
+        pw <- pwindows[idx[1]]
+        sw <- swindows[idx[1]]
+        logd <- do.call(
+          primarycensored::dprimarycensored,
+          c(
+            list(
+              x = lowers[idx], pdist = pdist,
+              pwindow = pw, swindow = sw, log = TRUE
+            ),
+            pars
+          )
         )
-        z <- z + log(cdfs[2] - cdfs[1])
+        z <- z + sum(logd)
       }
       z
     }

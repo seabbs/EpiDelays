@@ -241,6 +241,28 @@ test_that("parfitml default engine still fits gamma end-to-end", {
   expect_equal(fit$censtype, "double")
 })
 
+test_that("primarycensored engine handles mixed pwindow rows", {
+  skip_if_no_primarycensored()
+  # Mix two distinct primary windows (1 and 2) so the group-by logic in
+  # build_pc_loglik() has to dispatch more than one dprimarycensored call.
+  x <- data.frame(
+    x1l = c(0, 1, 2, 3, 4, 5),
+    x1r = c(1, 2, 3, 5, 6, 7),
+    x2l = c(3, 4, 5, 6, 7, 8),
+    x2r = c(4, 5, 6, 7, 8, 9)
+  )
+  stopifnot(length(unique(x$x1r - x$x1l)) == 2L)
+
+  v <- c(1.5, log(0.8))
+  m_int <- kerlikelihood(
+    x = x, family = "gaussian", likapprox = "ni", engine = "integrate"
+  )
+  m_pc <- kerlikelihood(
+    x = x, family = "gaussian", likapprox = "ni", engine = "primarycensored"
+  )
+  expect_equal(m_pc$loglik(v, x), m_int$loglik(v, x), tolerance = 1e-8)
+})
+
 test_that("gaussian dprimarycensored matches per-row kerlikelihood contribution", {
   skip_if_no_primarycensored()
   x <- make_double_data()
