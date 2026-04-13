@@ -120,6 +120,37 @@ Stability should be at least as good as the current implementation for the analy
 
 A follow-up issue should benchmark `parfitml` on all five families across representative sample sizes once the rewrite lands, so the speedup table can be reported end-to-end rather than at the per-call level.
 
+### End-to-end parfitml benchmark
+
+End-to-end wall-clock from a single `parfitml()` fit per cell on doubly-interval-censored data, with `pwindow = swindow = 1` and `Bboot = 100`.
+Data are simulated via `primarycensored::rprimarycensored()` using the same ground-truth parameters as `tests/testthat/test-kerlikelihood-primarycensored.R`; for the non-negative-support families (`gamma`, `lognormal`, `weibull`) draws with `delay < pwindow` are rejected so `parfitml`'s non-negative sample-space check passes on all rows.
+Reproduce with `Rscript scripts/benchmark-parfitml.R` from the repo root.
+
+| family    |    n | Bboot | elapsed (s) | converged |
+|-----------|-----:|------:|------------:|-----------|
+| gaussian  |   50 |   100 |        1.80 | TRUE      |
+| gaussian  |  200 |   100 |        3.35 | TRUE      |
+| gaussian  | 1000 |   100 |        9.82 | TRUE      |
+| gamma     |   50 |   100 |        2.46 | TRUE      |
+| gamma     |  200 |   100 |        3.62 | TRUE      |
+| gamma     | 1000 |   100 |       10.65 | TRUE      |
+| lognormal |   50 |   100 |        1.86 | TRUE      |
+| lognormal |  200 |   100 |        3.21 | TRUE      |
+| lognormal | 1000 |   100 |       10.27 | TRUE      |
+| weibull   |   50 |   100 |        1.81 | TRUE      |
+| weibull   |  200 |   100 |        3.28 | TRUE      |
+| weibull   | 1000 |   100 |       10.34 | TRUE      |
+| skewnorm  |   50 |   100 |         DNF | DNF       |
+| skewnorm  |  200 |   100 |         DNF | DNF       |
+| skewnorm  | 1000 |   100 |         DNF | DNF       |
+
+The four numeric families land within a narrow band of each other at each sample size, which confirms that the per-row `dprimarycensored` dispatch inside `build_pc_loglik` is no longer the bottleneck; the analytical `pcens_cdf` fast path for gamma, log-normal and Weibull pulls them into the same regime as gaussian despite gaussian still routing through numerical integration.
+Scaling is sub-linear in `n` relative to a pure `n × Bboot` model: going from `n = 50` to `n = 1000` (a 20x jump in data) multiplies wall-clock by about 5 to 6, so the cost is dominated by a mix of `optim` iterations and bootstrap resamples rather than by the per-row likelihood evaluation, consistent with `dprimarycensored`'s unique-quantile dedup flattening the per-call cost on integer-day data.
+Skew-normal does not finish on any cell because `primarycensored::check_pdist` calls `pskewnorm` on four large test quantiles drawn on each `dprimarycensored` invocation and rejects the pdist when optim drifts to a region where Owen's T returns numerically saturated values; this is a pre-existing fragility of the skew-normal path under the new engine and is called out in the open questions for upstream rather than patched here.
+
+Benchmark machine: R 4.5.0 (2025-04-11), `aarch64-apple-darwin20`.
+Total wall-clock for all 15 cells: 63.1 s.
+
 ## 6. Open questions for upstream
 
 - Would upstream accept a PR that adds an `engine = c("integrate", "primarycensored")` switch to `kerlikelihood`, `parfitml` and `parfitmom`, defaulting to the existing `integrate` code for one release and flipping the default once benchmarks and a CRAN round-trip have landed?
