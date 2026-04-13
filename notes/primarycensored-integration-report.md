@@ -128,28 +128,29 @@ Reproduce with `Rscript scripts/benchmark-parfitml.R` from the repo root.
 
 | family    |    n | Bboot | elapsed (s) | converged |
 |-----------|-----:|------:|------------:|-----------|
-| gaussian  |   50 |   100 |        1.80 | TRUE      |
-| gaussian  |  200 |   100 |        3.35 | TRUE      |
-| gaussian  | 1000 |   100 |        9.82 | TRUE      |
-| gamma     |   50 |   100 |        2.46 | TRUE      |
-| gamma     |  200 |   100 |        3.62 | TRUE      |
-| gamma     | 1000 |   100 |       10.65 | TRUE      |
-| lognormal |   50 |   100 |        1.86 | TRUE      |
-| lognormal |  200 |   100 |        3.21 | TRUE      |
-| lognormal | 1000 |   100 |       10.27 | TRUE      |
-| weibull   |   50 |   100 |        1.81 | TRUE      |
-| weibull   |  200 |   100 |        3.28 | TRUE      |
-| weibull   | 1000 |   100 |       10.34 | TRUE      |
-| skewnorm  |   50 |   100 |         DNF | DNF       |
-| skewnorm  |  200 |   100 |         DNF | DNF       |
-| skewnorm  | 1000 |   100 |         DNF | DNF       |
+| gaussian  |   50 |   100 |        1.91 | TRUE      |
+| gaussian  |  200 |   100 |        3.66 | TRUE      |
+| gaussian  | 1000 |   100 |       10.48 | TRUE      |
+| gamma     |   50 |   100 |        2.18 | TRUE      |
+| gamma     |  200 |   100 |        3.55 | TRUE      |
+| gamma     | 1000 |   100 |       10.80 | TRUE      |
+| lognormal |   50 |   100 |        1.93 | TRUE      |
+| lognormal |  200 |   100 |        3.28 | TRUE      |
+| lognormal | 1000 |   100 |       10.50 | TRUE      |
+| weibull   |   50 |   100 |        1.90 | TRUE      |
+| weibull   |  200 |   100 |        3.41 | TRUE      |
+| weibull   | 1000 |   100 |       10.81 | TRUE      |
+| skewnorm  |   50 |   100 |       38.17 | TRUE      |
+| skewnorm  |  200 |   100 |       29.08 | TRUE      |
+| skewnorm  | 1000 |   100 |       41.82 | TRUE      |
 
 The four numeric families land within a narrow band of each other at each sample size, which confirms that the per-row `dprimarycensored` dispatch inside `build_pc_loglik` is no longer the bottleneck; the analytical `pcens_cdf` fast path for gamma, log-normal and Weibull pulls them into the same regime as gaussian despite gaussian still routing through numerical integration.
 Scaling is sub-linear in `n` relative to a pure `n × Bboot` model: going from `n = 50` to `n = 1000` (a 20x jump in data) multiplies wall-clock by about 5 to 6, so the cost is dominated by a mix of `optim` iterations and bootstrap resamples rather than by the per-row likelihood evaluation, consistent with `dprimarycensored`'s unique-quantile dedup flattening the per-call cost on integer-day data.
-Skew-normal does not finish on any cell because `primarycensored::check_pdist` calls `pskewnorm` on four large test quantiles drawn on each `dprimarycensored` invocation and rejects the pdist when optim drifts to a region where Owen's T returns numerically saturated values; this is a pre-existing fragility of the skew-normal path under the new engine and is called out in the open questions for upstream rather than patched here.
+Skew-normal now converges on all three cells after two fixes: `kerlikelihood()` wraps `pskewnorm` with a clamp to `[0, 1]` plus a `cummax` on sorted inputs so `primarycensored::check_pdist` does not reject the CDF when Owen's T saturates mid-optim, and `parfitmom()` uses a signed cube root (plus a finiteness fallback) so small-sample negative skew does not seed the optimiser with NaN.
+Skew-normal is slower than the other families because `pskewnorm` does per-quantile Owen's T evaluations and cannot share the analytical `pcens_cdf` fast path; per-call cost dominates the benchmark cell.
 
 Benchmark machine: R 4.5.0 (2025-04-11), `aarch64-apple-darwin20`.
-Total wall-clock for all 15 cells: 63.1 s.
+Total wall-clock for all 15 cells: 173.8 s.
 
 ## 6. Open questions for upstream
 

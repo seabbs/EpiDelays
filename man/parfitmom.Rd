@@ -4,11 +4,19 @@
 \alias{parfitmom}
 \title{Method of moments for single or doubly interval-censored data}
 \usage{
-parfitmom(x, family, incheck = TRUE, L = 0, D = Inf)
+parfitmom(
+  x,
+  family,
+  incheck = TRUE,
+  L = 0,
+  D = Inf,
+  dprimary = stats::dunif,
+  dprimary_args = list()
+)
 }
 \arguments{
 \item{x}{A data frame with either two columns named \code{xl} and \code{xr},
-or four columns named \code{x1l}, \code{x1r}, \code{x2l}, \code{x2r}. See
+or four columns named \code{x1l} and \code{x1r}, \code{x2l}, \code{x2r}. See
 description for constraints imposed on the columns.}
 
 \item{family}{A character string specifying the name of the parametric
@@ -26,6 +34,13 @@ the centre of \code{[L, D]}), but the result is only used as an optimiser
 starting value, so the bias is tolerated.}
 
 \item{D}{Upper truncation point. See \code{L}.}
+
+\item{dprimary}{Ignored. Accepted for signature consistency with
+\code{\link{parfitml}} so the same argument set can be threaded through
+both routines. Moment matching assumes uniform primary onset.}
+
+\item{dprimary_args}{Ignored. Accepted for signature consistency with
+\code{\link{parfitml}}.}
 }
 \value{
 A list containing information on the chosen parametric family and

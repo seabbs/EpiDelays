@@ -103,10 +103,27 @@ parfitmom <- function(x, family, incheck = TRUE, L = 0, D = Inf,
                   mompoint_ub = mompoint_ub)
   } else if (family == "skewnorm") {
     rsn <- 2 * m3 / (4 - pi)
-    par2approx <- sqrt(m2 + rsn^(2 / 3))
-    dapprox <- (rsn^(1 / 3)) / (par2approx * sqrt(2 / pi))
-    par3approx <- dapprox / sqrt(1 - dapprox^2)
-    par1approx <- m1 - par2approx * dapprox * sqrt(2 / pi)
+    # Use a signed cube root so negative sample skew does not produce NaN
+    # seeds. The original `rsn^(2/3)` returns NaN for rsn < 0 in R, which
+    # propagates into v0 and crashes optim before the first likelihood
+    # evaluation.
+    cbrt <- function(z) sign(z) * abs(z)^(1 / 3)
+    rsn_13 <- cbrt(rsn)
+    rsn_23 <- rsn_13^2
+    par2approx <- sqrt(m2 + rsn_23)
+    dapprox <- rsn_13 / (par2approx * sqrt(2 / pi))
+    # Clamp |dapprox| < 1 so the slant remains finite even in small-sample
+    # cases where the moment identity pushes dapprox past the feasible
+    # boundary. The MoM estimate is only an optimiser seed.
+    dapprox_clamped <- max(min(dapprox, 0.99), -0.99)
+    par3approx <- dapprox_clamped / sqrt(1 - dapprox_clamped^2)
+    par1approx <- m1 - par2approx * dapprox_clamped * sqrt(2 / pi)
+    if (!all(is.finite(c(par1approx, par2approx, par3approx))) ||
+        par2approx <= 0) {
+      par1approx <- m1
+      par2approx <- sqrt(max(m2, 1e-6))
+      par3approx <- 0
+    }
     mompoint_ub <- c(par1approx, log(par2approx), par3approx)
     lpout <- list(par1approx = par1approx, par2approx = par2approx,
                   par3approx = par3approx, mompoint_ub = mompoint_ub)
