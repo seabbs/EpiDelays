@@ -53,8 +53,8 @@ ptruncskewnorm_nonneg <- function(q, location, scale, slant) {
   out <- rep(0, length(q))
   pos <- q > 0
   if (any(pos) && denom > 0) {
-    raw <- pskewnorm(x = q[pos], par1 = location, par2 = scale, par3 = slant)
-    out[pos] <- (raw - f0) / denom
+    num <- pskewnorm(x = q[pos], par1 = location, par2 = scale, par3 = slant)
+    out[pos] <- (num - f0) / denom
   }
   out[is.infinite(q) & q > 0] <- 1
   clamp_monotone_cdf(q, out)

@@ -32,7 +32,9 @@ make_double_data <- function(seed = 1L, n = 5L) {
 trunc_family_cases <- list(
   gaussian = list(
     v = c(1.5, log(0.8)),
-    pdist = stats::pnorm,
+    # Gaussian is interpreted as zero-truncated inside kerlikelihood(), so
+    # the oracle uses the same wrapper.
+    pdist = ptruncnorm_nonneg,
     pars = list(mean = 1.5, sd = 0.8)
   ),
   gamma = list(
@@ -87,11 +89,13 @@ test_that("nc==4 truncation subtracts per-row log(F_cens(D) - F_cens(L))", {
   x <- x_all[keep, ]
   expect_gt(nrow(x), 0L)
 
-  # Oracle: call dprimarycensored() directly row-by-row with L, D.
+  # Oracle: call dprimarycensored() directly row-by-row with L, D. The
+  # gaussian family is zero-truncated inside kerlikelihood(), so the oracle
+  # uses the same ptruncnorm_nonneg wrapper as pdist.
   expected <- sum(vapply(seq_len(nrow(x)), function(i) {
     primarycensored::dprimarycensored(
       x = x$x2l[i] - x$x1l[i],
-      pdist = stats::pnorm,
+      pdist = ptruncnorm_nonneg,
       pwindow = x$x1r[i] - x$x1l[i],
       swindow = x$x2r[i] - x$x2l[i],
       L = L,

@@ -49,65 +49,17 @@ make_double_data <- function(seed = 1L, n = 5L) {
   )
 }
 
-# Idiomatic primarycensored oracle: sum the per-row log-density from
-# dprimarycensored() directly. primarycensored::dprimarycensored requires
-# scalar pwindow/swindow, so rows are iterated one at a time — the call
-# shape still mirrors the one end users should reach for when writing a
-# doubly-interval-censored likelihood by hand.
-kerlik_loglik_via_dprimarycensored <- function(x, pdist, pars) {
-  sum(vapply(seq_len(nrow(x)), function(i) {
-    do.call(
-      primarycensored::dprimarycensored,
-      c(
-        list(
-          x = x$x2l[i] - x$x1l[i],
-          pdist = pdist,
-          pwindow = x$x1r[i] - x$x1l[i],
-          swindow = x$x2r[i] - x$x2l[i],
-          log = TRUE
-        ),
-        pars
-      )
-    )
-  }, numeric(1)))
-}
-
-# Direct integrate()-based reconstruction of the doubly-interval-censored
-# inner integral for any parametric family. Kept test-local as an
-# independent regression lock: if the production dprimarycensored path ever
-# drifts from the numerical integral, the per-family tests below will fail.
-# The helper is CDF-agnostic and driven by the same `pdist` + `pars` passed
-# to the dprimarycensored oracle, so the same `family_cases` entry
-# configures both oracles.
-kerlik_integrate_reference <- function(x, pdist, pars) {
-  n <- nrow(x)
-  z <- 0
-  for (i in seq_len(n)) {
-    h <- function(t1) {
-      do.call(pdist, c(list(x$x2r[i] - t1), pars)) -
-        do.call(pdist, c(list(x$x2l[i] - t1), pars))
-    }
-    logint <- log(
-      stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value
-    )
-    z <- z + logint - log(x$x1r[i] - x$x1l[i])
-  }
-  z
-}
-
-# CDF wrapper for pskewnorm with a signature compatible with
-# primarycensored::dprimarycensored (which calls pdist(q, ...)).
-pskewnorm_cdf <- function(q, location, scale, slant) {
-  EpiDelays::pskewnorm(x = q, par1 = location, par2 = scale, par3 = slant)
-}
-
-# Parametric family configurations. Each entry describes the family-specific
-# bits needed to (a) evaluate kerlikelihood and (b) call dprimarycensored with
-# the matching CDF and parameters.
+# Reference oracles (kerlik_loglik_via_dprimarycensored,
+# kerlik_integrate_reference_truncated, kerlik_integrate_reference_upstream)
+# are defined in tests/testthat/helper-kerlik-references.R. They are
+# CDF-agnostic, so each family_cases entry supplies its own `pdist`. The
+# signed-support families (gaussian, skewnorm) use the zero-truncated
+# wrappers that kerlikelihood() itself passes into dprimarycensored, so the
+# production path and the oracles share the same underlying delay CDF.
 family_cases <- list(
   gaussian = list(
     v = c(1.5, log(0.8)),
-    pdist = stats::pnorm,
+    pdist = ptruncnorm_nonneg,
     pars = list(mean = 1.5, sd = 0.8)
   ),
   gamma = list(
@@ -127,7 +79,7 @@ family_cases <- list(
   ),
   skewnorm = list(
     v = c(1, log(1), 2),
-    pdist = pskewnorm_cdf,
+    pdist = ptruncskewnorm_nonneg,
     pars = list(location = 1, scale = 1, slant = 2)
   )
 )
@@ -176,19 +128,22 @@ for (fam in names(family_cases)) {
     })
 
     test_that(sprintf(
-      "%s ni matches the integrate-based reference", family
+      "%s ni matches the truncated integrate-based reference", family
     ), {
       # Regression lock: the production dprimarycensored path must agree
       # with the direct integrate()-based reconstruction in
-      # kerlik_integrate_reference(), flagging any drift in a future
-      # refactor.
+      # kerlik_integrate_reference_truncated(), flagging any drift in a
+      # future refactor. For the signed-support families the `pdist` in
+      # family_cases is already a zero-truncated wrapper, so the oracle
+      # and the production path agree on the semantics of the underlying
+      # delay distribution.
       skip_if_no_primarycensored()
       x <- make_double_data()
 
       m <- kerlikelihood(x = x, family = family, likapprox = "ni")
       expect_equal(
         m$loglik(case$v, x),
-        kerlik_integrate_reference(
+        kerlik_integrate_reference_truncated(
           x = x, pdist = case$pdist, pars = case$pars
         ),
         tolerance = 1e-8
@@ -300,8 +255,96 @@ test_that("kerlikelihood handles mixed pwindow rows", {
   m <- kerlikelihood(x = x, family = "gaussian", likapprox = "ni")
 
   expected <- kerlik_loglik_via_dprimarycensored(
-    x = x, pdist = stats::pnorm,
+    x = x, pdist = ptruncnorm_nonneg,
     pars = list(mean = v[1], sd = exp(v[2]))
   )
   expect_equal(m$loglik(v, x), expected, tolerance = 1e-8)
+})
+
+# Delta-documenting tests.
+#
+# These pin the intentional semantic delta between the upstream
+# integrate() reference (which uses the raw CDF on the full real line) and
+# the truncated reference (which treats the delay as non-negative). For
+# positive-support families the two agree trivially; for signed-support
+# families the two differ by design.
+
+test_that("upstream vs truncated oracles agree on positive-support families", {
+  skip_if_no_primarycensored()
+  x <- make_double_data()
+  for (family in c("gamma", "lognormal", "weibull")) {
+    case <- family_cases[[family]]
+    upstream <- kerlik_integrate_reference_upstream(
+      x = x, pdist = case$pdist, pars = case$pars
+    )
+    truncated <- kerlik_integrate_reference_truncated(
+      x = x, pdist = case$pdist, pars = case$pars
+    )
+    # F(q) = 0 for q < 0 so the renormaliser is 1 and both oracles collapse
+    # to the same value.
+    expect_equal(upstream, truncated, tolerance = 1e-10, info = family)
+  }
+})
+
+test_that("upstream vs truncated oracles differ for gaussian at mean=0,sd=1", {
+  # Signed-support families at saturating params sit deep in the regime
+  # where the untruncated and truncated semantics disagree. At mean = 0,
+  # sd = 1 on the test frame the upstream integrate() oracle is smaller
+  # (more negative loglik) than the truncated oracle by roughly 3-5 nats
+  # because half of each row's mass under the untruncated pnorm sits on
+  # the negative half-line and is lost to the d <= 0 short-circuit.
+  skip_if_no_primarycensored()
+  x <- make_double_data()
+  pars <- list(mean = 0, sd = 1)
+  upstream <- kerlik_integrate_reference_upstream(
+    x = x, pdist = stats::pnorm, pars = pars
+  )
+  truncated <- kerlik_integrate_reference_truncated(
+    x = x, pdist = ptruncnorm_nonneg, pars = pars
+  )
+  expect_false(isTRUE(all.equal(upstream, truncated)))
+  # Upstream has more mass on the unconstrained real line and therefore
+  # assigns less density to each observed interval on the positive side.
+  expect_lt(upstream, truncated)
+})
+
+test_that("upstream vs truncated differ for skewnorm at saturating params", {
+  skip_if_no_primarycensored()
+  x <- make_double_data()
+  # slant = 5 puts substantial mass to the right of zero already; at
+  # location = 0, scale = 1 the zero truncation still redistributes a
+  # non-negligible chunk of probability and the two oracles diverge.
+  pars <- list(location = 0, scale = 1, slant = 5)
+  raw_pskewnorm <- function(q, location, scale, slant) {
+    EpiDelays::pskewnorm(x = q, par1 = location, par2 = scale, par3 = slant)
+  }
+  upstream <- kerlik_integrate_reference_upstream(
+    x = x, pdist = raw_pskewnorm, pars = pars
+  )
+  truncated <- kerlik_integrate_reference_truncated(
+    x = x, pdist = ptruncskewnorm_nonneg, pars = pars
+  )
+  expect_false(isTRUE(all.equal(upstream, truncated)))
+  expect_lt(upstream, truncated)
+})
+
+test_that("upstream vs truncated agree for gaussian in the safe regime", {
+  # At mean = 2.5, sd = 1 on make_double_data(), pnorm(0, mean, sd) is
+  # tiny (~0.006) and the renormaliser is effectively 1. Upstream and
+  # truncated agree within roughly 3e-2 on the summed loglik across 5
+  # rows — useful context for anyone debugging the benchmark or wondering
+  # why the default test params don't expose the delta. The remaining gap
+  # comes from the zero-truncation redistributing the ~0.6% of mass below
+  # zero onto the positive half-line, which slightly inflates each row's
+  # truncated density relative to the upstream full-real oracle.
+  skip_if_no_primarycensored()
+  x <- make_double_data()
+  pars <- list(mean = 2.5, sd = 1)
+  upstream <- kerlik_integrate_reference_upstream(
+    x = x, pdist = stats::pnorm, pars = pars
+  )
+  truncated <- kerlik_integrate_reference_truncated(
+    x = x, pdist = ptruncnorm_nonneg, pars = pars
+  )
+  expect_equal(upstream, truncated, tolerance = 5e-2)
 })
