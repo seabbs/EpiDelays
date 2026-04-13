@@ -2,8 +2,8 @@
 #
 # kerlikelihood()'s doubly-interval-censored ni branch is implemented on top
 # of primarycensored::dprimarycensored(). These tests pin that equivalence
-# down numerically and lock the current implementation against a
-# reconstruction of the previous stats::integrate() based algorithm so that
+# down numerically and lock the current implementation against a direct
+# integrate()-based reconstruction of the same inner integral, so that
 # future refactors cannot drift silently.
 #
 # Derivation:
@@ -72,13 +72,13 @@ kerlik_loglik_via_dprimarycensored <- function(x, pdist, pars) {
   }, numeric(1)))
 }
 
-# Reconstruction of the pre-primarycensored stats::integrate() inner loop for
-# any parametric family. Kept test-local so the original algorithm lives on
-# in exactly one place as a regression lock; if the production
-# dprimarycensored path ever drifts from the numerical integral, the
-# per-family tests below will fail. The helper is CDF-agnostic and driven by
-# the same `pdist` + `pars` passed to the dprimarycensored oracle, so the
-# same `family_cases` entry configures both oracles.
+# Direct integrate()-based reconstruction of the doubly-interval-censored
+# inner integral for any parametric family. Kept test-local as an
+# independent regression lock: if the production dprimarycensored path ever
+# drifts from the numerical integral, the per-family tests below will fail.
+# The helper is CDF-agnostic and driven by the same `pdist` + `pars` passed
+# to the dprimarycensored oracle, so the same `family_cases` entry
+# configures both oracles.
 kerlik_integrate_reference <- function(x, pdist, pars) {
   n <- nrow(x)
   z <- 0
@@ -176,12 +176,12 @@ for (fam in names(family_cases)) {
     })
 
     test_that(sprintf(
-      "%s ni matches the legacy integrate-based reference", family
+      "%s ni matches the integrate-based reference", family
     ), {
       # Regression lock: the production dprimarycensored path must agree
-      # with a direct reconstruction of the removed stats::integrate()
-      # inner loop. This keeps the previous algorithm reproducible from
-      # one test-local helper and flags any drift in a future refactor.
+      # with the direct integrate()-based reconstruction in
+      # kerlik_integrate_reference(), flagging any drift in a future
+      # refactor.
       skip_if_no_primarycensored()
       x <- make_double_data()
 

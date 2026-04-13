@@ -20,10 +20,11 @@
 #' Returns the log-likelihood function of parameters that have been transformed
 #' to live in an unbounded parameter space. This makes the
 #' maximization/evaluation of the likelihood function numerically more stable.
-#' The doubly interval-censored likelihood function requires to evaluate an
-#' inner integral. By default, this is implemented via numerical integration
-#' (ni) with \code{likapprox = "ni"}, where the integral is evaluated with
-#' \code{primarycensored::dprimarycensored()}. Another option is
+#' The doubly interval-censored likelihood function marginalises out the
+#' primary event time. By default (\code{likapprox = "ni"}), this
+#' marginalisation is delegated to
+#' \code{primarycensored::dprimarycensored()}, which chooses the most
+#' efficient method for the given CDF and windows. Another option is
 #' \code{likapprox = "mc"}, which uses crude Monte Carlo sampling to evaluate
 #' the inner integral in the doubly interval-censored likelihood function.
 #' Note that Monte Carlo sampling results in much longer computation times to
@@ -36,9 +37,9 @@
 #' @param family A character string specifying the name of the parametric
 #' family.
 #' @param likapprox Approximation of the likelihood function in case of doubly
-#' interval-censored data. Default is \code{"ni"} for numerical integration.
-#' Another possibility is \code{"mc"} for crude Monte Carlo sampling with 1000
-#' samples.
+#' interval-censored data. Default is \code{"ni"}, which delegates evaluation
+#' to \code{primarycensored::dprimarycensored()}. Another possibility is
+#' \code{"mc"} for crude Monte Carlo sampling with 1000 samples.
 #'
 #' @return A list containing information on the chosen parametric family,
 #' the log-likelihood function, a function that transforms back the parameters
@@ -82,11 +83,11 @@ kerlikelihood <- function(x, family, likapprox = "ni") {
   pskewnorm_cdf <- function(q, location, scale, slant) {
     pskewnorm(x = q, par1 = location, par2 = scale, par3 = slant)
   }
-  # Shared loglik builder for the doubly interval-censored ni branch: given a
+  # Shared loglik builder for the doubly interval-censored ni branch. Given a
   # CDF and a function that extracts a named parameter list from `v`, returns
   # a closure that sums the per-row log-density from
   # primarycensored::dprimarycensored(). Rows are grouped by (pwindow, swindow)
-  # so dprimarycensored's internal lookup table is reused within each group.
+  # because dprimarycensored requires scalar pwindow/swindow.
   build_pc_loglik <- function(pdist, pars_fn) {
     force(pdist)
     force(pars_fn)
