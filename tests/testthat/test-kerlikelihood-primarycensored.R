@@ -51,19 +51,19 @@ kerlik_loglik_via_dprimarycensored <- function(x, pdist, pars) {
 }
 
 # Reconstruction of the pre-primarycensored stats::integrate() inner loop for
-# gaussian doubly interval-censored data. Kept test-local so the old
-# algorithm lives on in exactly one place as a regression lock; if the
-# production dprimarycensored path ever drifts from the numerical integral,
-# this test will fail.
-kerlik_integrate_reference_gaussian <- function(v, x) {
-  mean_par <- v[1]
-  sd_par <- exp(v[2])
+# any parametric family. Kept test-local so the original algorithm lives on
+# in exactly one place as a regression lock; if the production
+# dprimarycensored path ever drifts from the numerical integral, the
+# per-family tests below will fail. The helper is CDF-agnostic and driven by
+# the same `pdist` + `pars` passed to the dprimarycensored oracle, so the
+# same `family_cases` entry configures both oracles.
+kerlik_integrate_reference <- function(x, pdist, pars) {
   n <- nrow(x)
   z <- 0
   for (i in seq_len(n)) {
     h <- function(t1) {
-      stats::pnorm(x$x2r[i] - t1, mean = mean_par, sd = sd_par) -
-        stats::pnorm(x$x2l[i] - t1, mean = mean_par, sd = sd_par)
+      do.call(pdist, c(list(x$x2r[i] - t1), pars)) -
+        do.call(pdist, c(list(x$x2l[i] - t1), pars))
     }
     logint <- log(
       stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value
@@ -154,6 +154,26 @@ for (fam in names(family_cases)) {
     })
 
     test_that(sprintf(
+      "%s ni matches the legacy integrate-based reference", family
+    ), {
+      # Regression lock: the production dprimarycensored path must agree
+      # with a direct reconstruction of the removed stats::integrate()
+      # inner loop. This keeps the previous algorithm reproducible from
+      # one test-local helper and flags any drift in a future refactor.
+      skip_if_no_primarycensored()
+      x <- make_double_data()
+
+      m <- kerlikelihood(x = x, family = family, likapprox = "ni")
+      expect_equal(
+        m$loglik(case$v, x),
+        kerlik_integrate_reference(
+          x = x, pdist = case$pdist, pars = case$pars
+        ),
+        tolerance = 1e-8
+      )
+    })
+
+    test_that(sprintf(
       "%s single-interval matches F(xr) - F(xl)", family
     ), {
       x_double <- make_double_data()
@@ -173,25 +193,6 @@ for (fam in names(family_cases)) {
     })
   })
 }
-
-test_that("gaussian ni matches the legacy integrate-based reference", {
-  # Regression lock: the production dprimarycensored path must agree with a
-  # direct reconstruction of the removed stats::integrate() inner loop. This
-  # keeps the previous algorithm reproducible from one test-local helper and
-  # flags any drift in a future refactor. Gaussian is used because it has no
-  # closed-form pcens_cdf method inside primarycensored, so the agreement is
-  # strictly numerical.
-  skip_if_no_primarycensored()
-  x <- make_double_data()
-  v <- c(1.5, log(0.8))
-
-  m <- kerlikelihood(x = x, family = "gaussian", likapprox = "ni")
-  expect_equal(
-    m$loglik(v, x),
-    kerlik_integrate_reference_gaussian(v, x),
-    tolerance = 1e-8
-  )
-})
 
 test_that("parfitml fits gamma end-to-end on doubly censored data", {
   set.seed(42L)
