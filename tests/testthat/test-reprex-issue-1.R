@@ -1,12 +1,11 @@
 # Runnable version of the smoke-test reprex posted to
 # https://github.com/oswaldogressani/EpiDelays/issues/1
 #
-# Confirms equivalence between kerlikelihood() and a vectorised primarycensored
-# call on integer-day doubly-interval-censored data, for both an analytical
-# family (gamma) and a numerical-only family (gaussian). The dedup pattern for
-# the gaussian case is the same one the issue comment uses to show primary-
-# censored still wins when there is no closed form, because realistic
-# integer-day data has few unique delay quantiles.
+# Confirms that kerlikelihood()'s doubly-interval-censored log-likelihood for
+# integer-day data agrees with a single vectorised call to
+# primarycensored::dprimarycensored(). dprimarycensored already dedupes its
+# inputs via an internal lookup table over `unique(c(x, x + swindow))`, so a
+# correct client call is a one-liner — no hand-rolled match() wrapper needed.
 
 make_integer_day_data <- function(seed = 1L, n = 100L) {
   set.seed(seed)
@@ -21,16 +20,22 @@ make_integer_day_data <- function(seed = 1L, n = 100L) {
 }
 
 pc_loglik <- function(v, x, pdist, par_map) {
-  n <- nrow(x)
-  qs_all <- c(x$x2l - x$x1l, x$x2r - x$x1l)
-  uq <- unique(qs_all)
-  args <- c(list(q = uq, pdist = pdist, pwindow = 1), par_map(v))
-  cdfs_u <- do.call(primarycensored::pprimarycensored, args)
-  cdfs <- cdfs_u[match(qs_all, uq)]
-  sum(log(cdfs[seq.int(n + 1L, 2L * n)] - cdfs[seq_len(n)]))
+  sum(do.call(
+    primarycensored::dprimarycensored,
+    c(
+      list(
+        x = x$x2l - x$x1l,
+        pdist = pdist,
+        pwindow = 1,
+        swindow = 1,
+        log = TRUE
+      ),
+      par_map(v)
+    )
+  ))
 }
 
-test_that("reprex (issue #1): gamma kerlikelihood == vectorised pprimarycensored", {
+test_that("reprex (issue #1): gamma kerlikelihood == dprimarycensored", {
   skip_if_no_primarycensored()
 
   x <- make_integer_day_data()
@@ -45,7 +50,7 @@ test_that("reprex (issue #1): gamma kerlikelihood == vectorised pprimarycensored
   )
 })
 
-test_that("reprex (issue #1): gaussian kerlikelihood == vectorised pprimarycensored", {
+test_that("reprex (issue #1): gaussian kerlikelihood == dprimarycensored", {
   skip_if_no_primarycensored()
 
   x <- make_integer_day_data()
