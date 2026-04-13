@@ -6,8 +6,6 @@
 ^pkgdown$
 ^primarycensored$
 ^CLAUDE\.md$
-^notes$
 ^\.github$
 ^\.lintr$
 ^\.claude$
-^scripts$
