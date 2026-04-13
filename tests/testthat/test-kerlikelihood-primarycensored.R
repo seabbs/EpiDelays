@@ -20,11 +20,33 @@
 
 make_double_data <- function(seed = 1L, n = 5L) {
   set.seed(seed)
+  # Continuous primary onset calendar baseline plus row-varying primary and
+  # secondary observation windows. Delays are drawn via
+  # primarycensored::rprimarycensored() so the simulator demonstrates the
+  # primarycensored idiom on the sampling side. rprimarycensored quantises
+  # the total delay to a multiple of swindow, so the secondary observation
+  # interval is [x1l + delay, x1l + delay + swidth]. The evaluation family in
+  # the tests below is not required to match the sampling distribution — the
+  # simulator just needs to produce plausible doubly-interval-censored rows.
   x1l <- sort(stats::runif(n, 0, 3))
-  x1r <- x1l + stats::runif(n, 0.5, 1.5)
-  x2l <- x1r + stats::runif(n, 0.2, 4)
-  x2r <- x2l + stats::runif(n, 0.3, 1.5)
-  data.frame(x1l = x1l, x1r = x1r, x2l = x2l, x2r = x2r)
+  pwidth <- stats::runif(n, 0.5, 1.5)
+  swidth <- stats::runif(n, 0.3, 1.5)
+  delays <- vapply(seq_len(n), function(i) {
+    primarycensored::rprimarycensored(
+      n = 1L,
+      rdist = stats::rnorm,
+      pwindow = pwidth[i],
+      swindow = swidth[i],
+      mean = 2.5,
+      sd = 1
+    )
+  }, numeric(1))
+  data.frame(
+    x1l = x1l,
+    x1r = x1l + pwidth,
+    x2l = x1l + delays,
+    x2r = x1l + delays + swidth
+  )
 }
 
 # Idiomatic primarycensored oracle: sum the per-row log-density from
@@ -176,6 +198,7 @@ for (fam in names(family_cases)) {
     test_that(sprintf(
       "%s single-interval matches F(xr) - F(xl)", family
     ), {
+      skip_if_no_primarycensored()
       x_double <- make_double_data()
       # Reuse the existing interval for the secondary event as a single
       # interval-censored observation (xl, xr) — positive throughout so the
@@ -195,17 +218,32 @@ for (fam in names(family_cases)) {
 }
 
 test_that("parfitml fits gamma end-to-end on doubly censored data", {
+  skip_if_no_primarycensored()
   set.seed(42L)
   n <- 30L
-  # Simulate doubly interval-censored gamma data. Use narrow primary windows
-  # and small secondary windows so the fit converges quickly with few
-  # bootstrap iterations.
+  # Simulate doubly interval-censored gamma data via
+  # primarycensored::rprimarycensored(). Narrow primary and secondary windows
+  # keep the fit quick with few bootstrap iterations. rprimarycensored needs
+  # scalar pwindow/swindow, so draw row-by-row.
   x1l <- sort(stats::runif(n, 0, 2))
-  x1r <- x1l + stats::runif(n, 0.2, 0.8)
-  true_draw <- stats::rgamma(n, shape = 3, rate = 1)
-  x2l <- x1l + true_draw
-  x2r <- x2l + stats::runif(n, 0.2, 0.8)
-  x <- data.frame(x1l = x1l, x1r = x1r, x2l = x2l, x2r = x2r)
+  pwidth <- stats::runif(n, 0.2, 0.8)
+  swidth <- stats::runif(n, 0.2, 0.8)
+  delays <- vapply(seq_len(n), function(i) {
+    primarycensored::rprimarycensored(
+      n = 1L,
+      rdist = stats::rgamma,
+      pwindow = pwidth[i],
+      swindow = swidth[i],
+      shape = 3,
+      rate = 1
+    )
+  }, numeric(1))
+  x <- data.frame(
+    x1l = x1l,
+    x1r = x1l + pwidth,
+    x2l = x1l + delays,
+    x2r = x1l + delays + swidth
+  )
 
   fit <- parfitml(x = x, family = "gamma", Bboot = 10L, pgbar = FALSE)
   expect_true(fit$mleconv)
