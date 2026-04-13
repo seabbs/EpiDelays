@@ -250,6 +250,40 @@ test_that("parfitml fits gamma end-to-end on doubly censored data", {
   expect_equal(fit$censtype, "double")
 })
 
+test_that("gaussian left-tail: delay = 0 row matches truncated oracle", {
+  # Regression pin for the delay = 0 left-tail bug. At mean = 0, sd = 1, a
+  # row with x2l - x1l = 0 must not fall back to primarycensored's d <= 0
+  # short-circuit in pcens_cdf.default() (which hardcodes F_cens(0) = 0 on
+  # the raw pnorm CDF and leaves an incoherent subprobability on the
+  # interval [0, swindow]). The correct interpretation is that the delay is
+  # a non-negative truncated normal; with the wrapper in place this row
+  # agrees with an inline truncated-normal oracle.
+  skip_if_no_primarycensored()
+  x <- data.frame(
+    x1l = 0,
+    x1r = 1,
+    x2l = 0,
+    x2r = 1
+  )
+  v <- c(0, log(1))  # mean = 0, sd = 1
+
+  # Inline zero-truncated normal CDF used purely as a regression oracle.
+  ptrunc <- function(q, mean, sd) {
+    f0 <- stats::pnorm(0, mean, sd)
+    out <- (stats::pnorm(q, mean, sd) - f0) / (1 - f0)
+    out[q <= 0] <- 0
+    out
+  }
+  expected <- primarycensored::dprimarycensored(
+    x = x$x2l - x$x1l, pdist = ptrunc,
+    pwindow = x$x1r - x$x1l, swindow = x$x2r - x$x2l,
+    mean = v[1], sd = exp(v[2]), log = TRUE
+  )
+
+  m <- kerlikelihood(x = x, family = "gaussian", likapprox = "ni")
+  expect_equal(m$loglik(v, x), sum(expected), tolerance = 1e-8)
+})
+
 test_that("kerlikelihood handles mixed pwindow rows", {
   skip_if_no_primarycensored()
   # Mix two distinct primary windows (1 and 2) so the group-by logic in
