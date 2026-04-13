@@ -140,6 +140,16 @@ test_that("parfitml recovers gamma parameters under dexpgrowth primary", {
   rate_hat <- fit$parfit$par2$point
   expect_equal(shape_hat, shape_true, tolerance = 0.25)
   expect_equal(rate_hat, rate_true, tolerance = 0.25)
+
+  # Exercise the summary.parfitml dprimary display path (the fn_name
+  # namespace-walker that labels non-default primary event densities).
+  out_full <- utils::capture.output(summary(fit))
+  expect_true(any(grepl("Primary event dist", out_full, fixed = TRUE)))
+  expect_true(any(grepl("dexpgrowth", out_full, fixed = TRUE)))
+  expect_true(any(grepl("r = ", out_full, fixed = TRUE)))
+  out_compact <- utils::capture.output(summary(fit, type = "compact"))
+  expect_true(any(grepl("Primary event dist", out_compact, fixed = TRUE)))
+  expect_true(any(grepl("dexpgrowth", out_compact, fixed = TRUE)))
 })
 
 test_that("dexpgrowth vs dunif give materially different fits", {
