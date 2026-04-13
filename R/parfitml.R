@@ -35,6 +35,13 @@
 #' \code{"lognormal"}, \code{"weibull"}, or \code{"skewnorm"}.
 #' @param Bboot Number of bootstrap samples. Default is 1000.
 #' @param pgbar Should a progress bar be displayed in console? Default is TRUE.
+#' @param L Lower truncation point of the underlying delay distribution.
+#' Default is \code{0}. Must satisfy \code{L >= 0} and \code{L < D}. Data are
+#' assumed to be drawn conditional on the underlying delay lying inside
+#' \code{[L, D]}; the fitted parameters describe the unconditional delay
+#' distribution.
+#' @param D Upper truncation point of the underlying delay distribution.
+#' Default is \code{Inf}.
 #' @param dprimary Primary event density function. See
 #' \code{\link{kerlikelihood}} for details. Defaults to \code{stats::dunif}
 #' (uniform primary onset), which reproduces the behaviour of earlier
@@ -56,18 +63,29 @@
 #' @export
 
 parfitml <- function(x, family, Bboot = 1000, pgbar = TRUE,
-                     dprimary = stats::dunif, dprimary_args = list()){
+                     L = 0, D = Inf,
+                     dprimary = stats::dunif, dprimary_args = list()) {
+  # Validate truncation bounds up front, mirroring
+  # primarycensored::.check_truncation_bounds.
+  if (!is.numeric(L) || length(L) != 1L || is.na(L) || L < 0) {
+    stop("L must be a non-negative scalar.")
+  }
+  if (!is.numeric(D) || length(D) != 1L || is.na(D) || L >= D) {
+    stop("L must be less than D.")
+  }
   tic <- proc.time()
-  m <- kerlikelihood(x = x, family = family,
+  m <- kerlikelihood(x = x, family = family, L = L, D = D,
                      dprimary = dprimary,
                      dprimary_args = dprimary_args) # Model specification
   n <- nrow(x)
   np <- m$npars
-  # parfitmom ignores dprimary; the moment-matching seed is known-biased
-  # under non-uniform primary but Nelder-Mead recovers from moderate bias
-  # and keeping MoM primary-unaware avoids family/primary-specific
-  # corrections that would add complexity disproportionate to the benefit.
-  v0 <- parfitmom(x = x, family = family, incheck = FALSE)$mompoint_ub
+  # parfitmom ignores dprimary and L/D; the moment-matching seed is known to
+  # be biased under non-uniform primary or non-trivial truncation, but
+  # Nelder-Mead recovers from moderate bias and keeping MoM primary- and
+  # truncation-unaware avoids family/primary-specific corrections that would
+  # add complexity disproportionate to the benefit.
+  v0 <- parfitmom(x = x, family = family, incheck = FALSE,
+                  L = L, D = D)$mompoint_ub
   maxs <- list(fnscale = -1)
   mle <- stats::optim(par = v0, fn = m$loglik, x = x, control = maxs)
   mlepar <- as.numeric(m$originscale(mle$par))
@@ -112,10 +130,7 @@ parfitml <- function(x, family, Bboot = 1000, pgbar = TRUE,
   o <- c(m[!names(m) %in% c("loglik", "originscale")],
          list(n = n, Bboot = Bboot, parfit = parfit, delayfit = delayfit,
               aic = aic, bic = bic, mleconv = mleconv, bootdiscard = bootdiscard,
-              elapsed = toc[3]))
+              elapsed = toc[3], L = L, D = D))
   attr(o, "class") <- "parfitml"
   return(o)
 }
-
-
-

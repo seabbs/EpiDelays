@@ -68,6 +68,10 @@ summary.parfitml <- function(object, ndigits = 3, type = "full", ...) {
       dprimary_label <- fn_name
     }
   }
+  # Truncation bounds are only surfaced when they differ from the defaults;
+  # the untruncated path continues to print its original summary block.
+  has_trunc <- isTRUE(object$L > 0) ||
+    (!is.null(object$D) && is.finite(object$D))
   if(type == "full") { #--- Print output (full)
     cat("---------------------------------------------------- \n")
     cat("Parametric model fit (maximum likelihood) \n")
@@ -82,6 +86,10 @@ summary.parfitml <- function(object, ndigits = 3, type = "full", ...) {
     cat("Bootstrap discarded    : ", object$bootdiscard, "\n")
     if(!dprimary_is_default) {
       cat("Primary event dist     : ", dprimary_label, "\n")
+    }
+    if(has_trunc) {
+      cat("Left truncation (L)    : ", object$L, "\n")
+      cat("Right truncation (D)   : ", object$D, "\n")
     }
     cat("AIC                    : ", object$aic, "\n")
     cat("BIC                    : ", object$bic, "\n")
@@ -103,6 +111,10 @@ summary.parfitml <- function(object, ndigits = 3, type = "full", ...) {
     cat("Number of parameters : ", object$npars, "\n")
     if(!dprimary_is_default) {
       cat("Primary event dist   : ", dprimary_label, "\n")
+    }
+    if(has_trunc) {
+      cat("Left truncation (L)  : ", object$L, "\n")
+      cat("Right truncation (D) : ", object$D, "\n")
     }
     cat("AIC                  : ", object$aic, "\n")
     cat("BIC                  : ", object$bic, "\n")

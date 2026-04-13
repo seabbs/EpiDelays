@@ -4,13 +4,7 @@
 \alias{parfitmom}
 \title{Method of moments for single or doubly interval-censored data}
 \usage{
-parfitmom(
-  x,
-  family,
-  incheck = TRUE,
-  dprimary = stats::dunif,
-  dprimary_args = list()
-)
+parfitmom(x, family, incheck = TRUE, L = 0, D = Inf)
 }
 \arguments{
 \item{x}{A data frame with either two columns named \code{xl} and \code{xr},
@@ -25,12 +19,13 @@ family. Can be one of the following: \code{"gaussian"}, \code{"gamma"},
 frame \code{x} is in correct format and that \code{family} has been
 correctly specified by the user? Default is TRUE.}
 
-\item{dprimary}{Ignored. Accepted for signature consistency with
-\code{\link{parfitml}} so the same argument set can be threaded through
-both routines. Moment matching assumes uniform primary onset.}
+\item{L}{Lower truncation point. Accepted for signature compatibility with
+\code{parfitml()}; currently ignored. Under non-trivial truncation the
+moment estimators below are biased (sample mean and variance drift toward
+the centre of \code{[L, D]}), but the result is only used as an optimiser
+starting value, so the bias is tolerated.}
 
-\item{dprimary_args}{Ignored. Accepted for signature consistency with
-\code{\link{parfitml}}.}
+\item{D}{Upper truncation point. See \code{L}.}
 }
 \value{
 A list containing information on the chosen parametric family and

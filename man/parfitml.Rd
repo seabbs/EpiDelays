@@ -5,14 +5,7 @@
 \title{Parametric estimation with maximum likelihood for single or doubly
 interval-censored data}
 \usage{
-parfitml(
-  x,
-  family,
-  Bboot = 1000,
-  pgbar = TRUE,
-  dprimary = stats::dunif,
-  dprimary_args = list()
-)
+parfitml(x, family, Bboot = 1000, pgbar = TRUE, L = 0, D = Inf)
 }
 \arguments{
 \item{x}{A data frame with either two columns named \code{xl} and \code{xr},
@@ -27,14 +20,14 @@ family. Can be one of the following: \code{"gaussian"}, \code{"gamma"},
 
 \item{pgbar}{Should a progress bar be displayed in console? Default is TRUE.}
 
-\item{dprimary}{Primary event density function. See
-\code{\link{kerlikelihood}} for details. Defaults to \code{stats::dunif}
-(uniform primary onset), which reproduces the behaviour of earlier
-EpiDelays versions. Non-uniform choices include
-\code{primarycensored::dexpgrowth}.}
+\item{L}{Lower truncation point of the underlying delay distribution.
+Default is \code{0}. Must satisfy \code{L >= 0} and \code{L < D}. Data are
+assumed to be drawn conditional on the underlying delay lying inside
+\code{[L, D]}; the fitted parameters describe the unconditional delay
+distribution.}
 
-\item{dprimary_args}{A named list of additional arguments passed to
-\code{dprimary}. Defaults to an empty list.}
+\item{D}{Upper truncation point of the underlying delay distribution.
+Default is \code{Inf}.}
 }
 \value{
 A list containing detailed information on the fitted parametric
