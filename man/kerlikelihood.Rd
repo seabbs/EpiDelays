@@ -47,12 +47,13 @@ to live in an unbounded parameter space. This makes the
 maximization/evaluation of the likelihood function numerically more stable.
 The doubly interval-censored likelihood function requires to evaluate an
 inner integral. By default, this is implemented via numerical integration
-(ni) with \code{likapprox = "ni"}, where the integral is evaluated with the
-\code{integrate} routine. Another option is \code{likapprox = "mc"}, which
-uses crude Monte Carlo sampling to evaluate the inner integral in the
-doubly interval-censored likelihood function. Note that Monte
-Carlo sampling results in much longer computation times to evaluate the
-likelihood function. The number of Monte Carlo samples is fixed at 1000.
+(ni) with \code{likapprox = "ni"}, where the integral is evaluated with
+\code{primarycensored::dprimarycensored()}. Another option is
+\code{likapprox = "mc"}, which uses crude Monte Carlo sampling to evaluate
+the inner integral in the doubly interval-censored likelihood function.
+Note that Monte Carlo sampling results in much longer computation times to
+evaluate the likelihood function. The number of Monte Carlo samples is
+fixed at 1000.
 }
 \author{
 Oswaldo Gressani \email{oswaldo_gressani@hotmail.fr}

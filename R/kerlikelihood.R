@@ -22,12 +22,13 @@
 #' maximization/evaluation of the likelihood function numerically more stable.
 #' The doubly interval-censored likelihood function requires to evaluate an
 #' inner integral. By default, this is implemented via numerical integration
-#' (ni) with \code{likapprox = "ni"}, where the integral is evaluated with the
-#' \code{integrate} routine. Another option is \code{likapprox = "mc"}, which
-#' uses crude Monte Carlo sampling to evaluate the inner integral in the
-#' doubly interval-censored likelihood function. Note that Monte
-#' Carlo sampling results in much longer computation times to evaluate the
-#' likelihood function. The number of Monte Carlo samples is fixed at 1000.
+#' (ni) with \code{likapprox = "ni"}, where the integral is evaluated with
+#' \code{primarycensored::dprimarycensored()}. Another option is
+#' \code{likapprox = "mc"}, which uses crude Monte Carlo sampling to evaluate
+#' the inner integral in the doubly interval-censored likelihood function.
+#' Note that Monte Carlo sampling results in much longer computation times to
+#' evaluate the likelihood function. The number of Monte Carlo samples is
+#' fixed at 1000.
 #'
 #' @param x A data frame with either two columns named \code{xl} and \code{xr},
 #' or four columns named \code{x1l}, \code{x1r}, \code{x2l}, \code{x2r}. See
@@ -38,15 +39,6 @@
 #' interval-censored data. Default is \code{"ni"} for numerical integration.
 #' Another possibility is \code{"mc"} for crude Monte Carlo sampling with 1000
 #' samples.
-#' @param engine Backend used to evaluate the inner integral of the doubly
-#' interval-censored likelihood. Default is \code{"integrate"}, which preserves
-#' the original \code{stats::integrate()} implementation. When set to
-#' \code{"primarycensored"}, the inner integral is evaluated via
-#' \code{primarycensored::pprimarycensored()}. The \code{primarycensored}
-#' engine is only honoured for doubly interval-censored data with
-#' \code{likapprox = "ni"}; for single interval-censored data or the
-#' \code{"mc"} approximation the argument is silently ignored and the
-#' integrate-based path is used.
 #'
 #' @return A list containing information on the chosen parametric family,
 #' the log-likelihood function, a function that transforms back the parameters
@@ -57,12 +49,10 @@
 #'
 #' @keywords internal
 
-kerlikelihood <- function(x, family, likapprox = "ni",
-                          engine = c("integrate", "primarycensored")) {
+kerlikelihood <- function(x, family, likapprox = "ni") {
   if(!(likapprox %in% c("ni", "mc"))) {
     stop("likapprox should either be ni or mc")
   }
-  engine <- match.arg(engine)
   # Input checks
   dfck <- kerdata_check(x = x) # data frame check
     if (dfck$result == "fail") {
@@ -86,24 +76,17 @@ kerlikelihood <- function(x, family, likapprox = "ni",
     likapprox <- "None"
   } else if (nc == 4) {
     censtype <- "double"
-    logdx1 <- log(x$x1r - x$x1l)
     M <- 1000 #  Monte carlo samples for doubly interval-censored likelihood
   }
-  # The primarycensored engine only wires up the doubly interval-censored ni
-  # branch. Fall back silently to the integrate-based path otherwise.
-  use_primarycensored <- isTRUE(engine == "primarycensored" &&
-                                  nc == 4 && likapprox == "ni")
   # CDF wrapper exposing pskewnorm with a primarycensored-friendly signature.
-  # The wrapper is defined locally so it only exists when the primarycensored
-  # engine is requested and kerlikelihood never touches primarycensored
-  # otherwise.
   pskewnorm_cdf <- function(q, location, scale, slant) {
     pskewnorm(x = q, par1 = location, par2 = scale, par3 = slant)
   }
-  # Shared loglik builder for the primarycensored engine: given a CDF and a
-  # function that extracts a named parameter list from `v`, returns a closure
-  # that sums log(F_cens(x2r - x1l) - F_cens(x2l - x1l)) across rows with
-  # pwindow = x1r - x1l.
+  # Shared loglik builder for the doubly interval-censored ni branch: given a
+  # CDF and a function that extracts a named parameter list from `v`, returns
+  # a closure that sums the per-row log-density from
+  # primarycensored::dprimarycensored(). Rows are grouped by (pwindow, swindow)
+  # so dprimarycensored's internal lookup table is reused within each group.
   build_pc_loglik <- function(pdist, pars_fn) {
     force(pdist)
     force(pars_fn)
@@ -161,30 +144,10 @@ kerlikelihood <- function(x, family, likapprox = "ni",
           z
         }
       } else if(likapprox == "ni") {
-        if (use_primarycensored) {
-          loglik <- build_pc_loglik(
-            pdist = stats::pnorm,
-            pars_fn = function(v) list(mean = v[1], sd = exp(v[2]))
-          )
-        } else {
-        loglik <- function(v, x) {
-          # v: unbounded parameter
-          par1 <- v[1]
-          par2 <- exp(v[2])
-          z <- 0
-          for(i in 1:n) {
-            h <- function(x1) {
-              Fl  <- stats::pnorm(q = x$x2l[i] - x1 , mean = par1, sd = par2)
-              Fr  <- stats::pnorm(q = x$x2r[i] - x1 , mean = par1, sd = par2)
-              hval <- Fr - Fl
-              hval
-            }
-            logint <- log(stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value)
-            z <- z + logint - logdx1[i]
-          }
-          z
-        }
-        }
+        loglik <- build_pc_loglik(
+          pdist = stats::pnorm,
+          pars_fn = function(v) list(mean = v[1], sd = exp(v[2]))
+        )
       }
     }
     originscale <- function(v) {
@@ -221,33 +184,12 @@ kerlikelihood <- function(x, family, likapprox = "ni",
           z
         }
       } else if(likapprox == "ni") {
-        if (use_primarycensored) {
-          loglik <- build_pc_loglik(
-            pdist = pskewnorm_cdf,
-            pars_fn = function(v) list(
-              location = v[1], scale = exp(v[2]), slant = v[3]
-            )
+        loglik <- build_pc_loglik(
+          pdist = pskewnorm_cdf,
+          pars_fn = function(v) list(
+            location = v[1], scale = exp(v[2]), slant = v[3]
           )
-        } else {
-        loglik <- function(v, x) {
-          # v: unbounded parameter
-          par1 <- v[1]
-          par2 <- exp(v[2])
-          par3 <- v[3]
-          z <- 0
-          for(i in 1:n) {
-            h <- function(x1) {
-              Fl <- pskewnorm(x = x$x2l[i] - x1, par1 = par1, par2 = par2, par3 = par3)
-              Fr <- pskewnorm(x = x$x2r[i] - x1, par1 = par1, par2 = par2, par3 = par3)
-              hval <- Fr - Fl
-              hval
-            }
-            logint <- log(stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value)
-            z <- z + logint - logdx1[i]
-          }
-          z
-        }
-        }
+        )
       }
     }
     originscale <- function(v) {
@@ -282,30 +224,10 @@ kerlikelihood <- function(x, family, likapprox = "ni",
           z
         }
       } else if(likapprox == "ni") {
-        if (use_primarycensored) {
-          loglik <- build_pc_loglik(
-            pdist = stats::pgamma,
-            pars_fn = function(v) list(shape = exp(v[1]), rate = exp(v[2]))
-          )
-        } else {
-        loglik <- function(v, x) {
-          # v: unbounded parameter
-          par1 <- exp(v[1])
-          par2 <- exp(v[2])
-          z <- 0
-          for(i in 1:n) {
-            h <- function(x1) {
-              Fl  <- stats::pgamma(q = x$x2l[i] - x1, shape = par1, rate = par2)
-              Fr  <- stats::pgamma(q = x$x2r[i] - x1, shape = par1, rate = par2)
-              hval <- Fr - Fl
-              hval
-            }
-            logint <- log(stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value)
-            z <- z + logint - logdx1[i]
-          }
-          z
-        }
-        }
+        loglik <- build_pc_loglik(
+          pdist = stats::pgamma,
+          pars_fn = function(v) list(shape = exp(v[1]), rate = exp(v[2]))
+        )
       }
     }
     originscale <- function(v) {
@@ -340,30 +262,10 @@ kerlikelihood <- function(x, family, likapprox = "ni",
           z
         }
       } else if(likapprox == "ni") {
-        if (use_primarycensored) {
-          loglik <- build_pc_loglik(
-            pdist = stats::plnorm,
-            pars_fn = function(v) list(meanlog = v[1], sdlog = exp(v[2]))
-          )
-        } else {
-        loglik <- function(v, x) {
-          # v: unbounded parameter
-          par1 <- v[1]
-          par2 <- exp(v[2])
-          z <- 0
-          for(i in 1:n) {
-            h <- function(x1) {
-              Fl  <- stats::plnorm(q = x$x2l[i] - x1, meanlog = par1, sdlog = par2)
-              Fr  <- stats::plnorm(q = x$x2r[i] - x1, meanlog = par1, sdlog = par2)
-              hval <- Fr - Fl
-              hval
-            }
-            logint <- log(stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value)
-            z <- z + logint - logdx1[i]
-          }
-          z
-        }
-        }
+        loglik <- build_pc_loglik(
+          pdist = stats::plnorm,
+          pars_fn = function(v) list(meanlog = v[1], sdlog = exp(v[2]))
+        )
       }
     }
     originscale <- function(v) {
@@ -398,30 +300,10 @@ kerlikelihood <- function(x, family, likapprox = "ni",
           z
         }
       } else if(likapprox == "ni") {
-        if (use_primarycensored) {
-          loglik <- build_pc_loglik(
-            pdist = stats::pweibull,
-            pars_fn = function(v) list(shape = exp(v[1]), scale = exp(v[2]))
-          )
-        } else {
-        loglik <- function(v, x) {
-          # v: unbounded parameter
-          par1 <- exp(v[1])
-          par2 <- exp(v[2])
-          z <- 0
-          for(i in 1:n) {
-            h <- function(x1) {
-              Fl  <- stats::pweibull(q = x$x2l[i] - x1, shape = par1, scale = par2)
-              Fr  <- stats::pweibull(q = x$x2r[i] - x1, shape = par1, scale = par2)
-              hval <- Fr - Fl
-              hval
-            }
-            logint <- log(stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value)
-            z <- z + logint - logdx1[i]
-          }
-          z
-        }
-        }
+        loglik <- build_pc_loglik(
+          pdist = stats::pweibull,
+          pars_fn = function(v) list(shape = exp(v[1]), scale = exp(v[2]))
+        )
       }
     }
     originscale <- function(v) {

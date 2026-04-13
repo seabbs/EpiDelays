@@ -1,9 +1,10 @@
 # Equivalence tests: kerlikelihood() vs primarycensored.
 #
-# Both the numerical-integration (`ni`) branch of kerlikelihood() and
-# primarycensored::pprimarycensored() compute the same doubly-interval-censored
-# likelihood. These tests pin that equivalence down numerically so we can
-# later swap the internals without changing semantics.
+# kerlikelihood()'s doubly-interval-censored ni branch is implemented on top
+# of primarycensored::dprimarycensored(). These tests pin that equivalence
+# down numerically and lock the current implementation against a
+# reconstruction of the previous stats::integrate() based algorithm so that
+# future refactors cannot drift silently.
 #
 # Derivation:
 #
@@ -13,12 +14,9 @@
 # Substitute s = t1 - x1l, so s ~ Uniform(0, pwindow) with pwindow = x1r - x1l:
 #     = E_s[ F((x2r - x1l) - s) - F((x2l - x1l) - s) ]
 #
-# pprimarycensored(q, pwindow) computes E_s[F(q - s)], therefore the inner
-# integral equals
-#     pprimarycensored(x2r - x1l, pwindow) - pprimarycensored(x2l - x1l, pwindow).
-#
-# And by definition dprimarycensored(x2l - x1l, pwindow, swindow = x2r - x2l)
-# returns the same difference.
+# By definition dprimarycensored(x2l - x1l, pwindow, swindow = x2r - x2l)
+# returns the log of that difference, so the total log-likelihood is a single
+# vectorised call to dprimarycensored with log = TRUE.
 
 make_double_data <- function(seed = 1L, n = 5L) {
   set.seed(seed)
@@ -29,32 +27,60 @@ make_double_data <- function(seed = 1L, n = 5L) {
   data.frame(x1l = x1l, x1r = x1r, x2l = x2l, x2r = x2r)
 }
 
-kerlik_inner_via_primarycensored <- function(x, pdist, ...) {
-  # Per-row contribution to the kerlikelihood() log-likelihood, computed via
-  # primarycensored. Each element equals exp(per-row log-lik contribution):
-  #   F_cens(x2r - x1l) - F_cens(x2l - x1l)
-  # where F_cens is pprimarycensored with pwindow = x1r - x1l. The
-  # normalisation by pwindow is built into pprimarycensored, which averages
-  # F(q - s) with s ~ Uniform(0, pwindow).
-  dots <- list(...)
-  vapply(seq_len(nrow(x)), function(i) {
-    pwindow <- x$x1r[i] - x$x1l[i]
-    qr <- x$x2r[i] - x$x1l[i]
-    ql <- x$x2l[i] - x$x1l[i]
-    args <- c(list(q = c(ql, qr), pdist = pdist, pwindow = pwindow), dots)
-    cdfs <- do.call(primarycensored::pprimarycensored, args)
-    cdfs[2] - cdfs[1]
-  }, numeric(1))
+# Idiomatic primarycensored oracle: sum the per-row log-density from
+# dprimarycensored() directly. primarycensored::dprimarycensored requires
+# scalar pwindow/swindow, so rows are iterated one at a time — the call
+# shape still mirrors the one end users should reach for when writing a
+# doubly-interval-censored likelihood by hand.
+kerlik_loglik_via_dprimarycensored <- function(x, pdist, pars) {
+  sum(vapply(seq_len(nrow(x)), function(i) {
+    do.call(
+      primarycensored::dprimarycensored,
+      c(
+        list(
+          x = x$x2l[i] - x$x1l[i],
+          pdist = pdist,
+          pwindow = x$x1r[i] - x$x1l[i],
+          swindow = x$x2r[i] - x$x2l[i],
+          log = TRUE
+        ),
+        pars
+      )
+    )
+  }, numeric(1)))
+}
+
+# Reconstruction of the pre-primarycensored stats::integrate() inner loop for
+# gaussian doubly interval-censored data. Kept test-local so the old
+# algorithm lives on in exactly one place as a regression lock; if the
+# production dprimarycensored path ever drifts from the numerical integral,
+# this test will fail.
+kerlik_integrate_reference_gaussian <- function(v, x) {
+  mean_par <- v[1]
+  sd_par <- exp(v[2])
+  n <- nrow(x)
+  z <- 0
+  for (i in seq_len(n)) {
+    h <- function(t1) {
+      stats::pnorm(x$x2r[i] - t1, mean = mean_par, sd = sd_par) -
+        stats::pnorm(x$x2l[i] - t1, mean = mean_par, sd = sd_par)
+    }
+    logint <- log(
+      stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value
+    )
+    z <- z + logint - log(x$x1r[i] - x$x1l[i])
+  }
+  z
 }
 
 # CDF wrapper for pskewnorm with a signature compatible with
-# primarycensored::pprimarycensored (which calls pdist(q, ...)).
+# primarycensored::dprimarycensored (which calls pdist(q, ...)).
 pskewnorm_cdf <- function(q, location, scale, slant) {
   EpiDelays::pskewnorm(x = q, par1 = location, par2 = scale, par3 = slant)
 }
 
 # Parametric family configurations. Each entry describes the family-specific
-# bits needed to (a) evaluate kerlikelihood and (b) call pprimarycensored with
+# bits needed to (a) evaluate kerlikelihood and (b) call dprimarycensored with
 # the matching CDF and parameters.
 family_cases <- list(
   gaussian = list(
@@ -89,31 +115,31 @@ for (fam in names(family_cases)) {
     family <- fam
     case <- family_cases[[family]]
 
-    test_that(sprintf("%s double-interval ni matches pprimarycensored", family), {
+    test_that(sprintf(
+      "%s double-interval ni matches dprimarycensored oracle", family
+    ), {
       skip_if_no_primarycensored()
       x <- make_double_data()
 
       m <- kerlikelihood(x = x, family = family, likapprox = "ni")
       ker_value <- m$loglik(case$v, x)
 
-      inner <- do.call(
-        kerlik_inner_via_primarycensored,
-        c(list(x = x, pdist = case$pdist), case$pars)
+      expected <- kerlik_loglik_via_dprimarycensored(
+        x = x, pdist = case$pdist, pars = case$pars
       )
-      expected <- sum(log(inner))
 
       expect_equal(ker_value, expected, tolerance = 1e-8)
     })
 
-    test_that(sprintf("%s double-interval mc matches pprimarycensored", family), {
+    test_that(sprintf(
+      "%s double-interval mc matches dprimarycensored oracle", family
+    ), {
       skip_if_no_primarycensored()
       x <- make_double_data()
 
-      inner <- do.call(
-        kerlik_inner_via_primarycensored,
-        c(list(x = x, pdist = case$pdist), case$pars)
+      expected <- kerlik_loglik_via_dprimarycensored(
+        x = x, pdist = case$pdist, pars = case$pars
       )
-      expected <- sum(log(inner))
 
       # kerlikelihood's mc closure uses stats::runif internally; seeding the
       # global RNG immediately before the call pins the Monte Carlo draws and
@@ -127,7 +153,9 @@ for (fam in names(family_cases)) {
       expect_equal(ker_value, expected, tolerance = 5e-2)
     })
 
-    test_that(sprintf("%s single-interval matches F(xr) - F(xl)", family), {
+    test_that(sprintf(
+      "%s single-interval matches F(xr) - F(xl)", family
+    ), {
       x_double <- make_double_data()
       # Reuse the existing interval for the secondary event as a single
       # interval-censored observation (xl, xr) — positive throughout so the
@@ -146,84 +174,26 @@ for (fam in names(family_cases)) {
   })
 }
 
-for (fam in names(family_cases)) {
-  local({
-    family <- fam
-    case <- family_cases[[family]]
-
-    test_that(sprintf(
-      "%s kerlikelihood engine primarycensored matches integrate", family
-    ), {
-      skip_if_no_primarycensored()
-      x <- make_double_data()
-
-      m_int <- kerlikelihood(
-        x = x, family = family, likapprox = "ni", engine = "integrate"
-      )
-      m_pc <- kerlikelihood(
-        x = x, family = family, likapprox = "ni", engine = "primarycensored"
-      )
-
-      expect_equal(
-        m_pc$loglik(case$v, x),
-        m_int$loglik(case$v, x),
-        tolerance = 1e-8
-      )
-    })
-  })
-}
-
-test_that("kerlikelihood engine defaults to integrate", {
-  x <- make_double_data()
-  m_default <- kerlikelihood(x = x, family = "gaussian", likapprox = "ni")
-  m_int <- kerlikelihood(
-    x = x, family = "gaussian", likapprox = "ni", engine = "integrate"
-  )
-  v <- c(1.5, log(0.8))
-  expect_equal(m_default$loglik(v, x), m_int$loglik(v, x))
-})
-
-test_that("kerlikelihood engine silently falls back for single interval", {
-  # nc == 2: primarycensored engine must be ignored (no primary window).
-  x <- data.frame(xl = c(1, 2, 3), xr = c(2, 3, 4))
-  v <- c(1.5, log(0.8))
-  m_int <- kerlikelihood(
-    x = x, family = "gaussian", likapprox = "ni", engine = "integrate"
-  )
-  m_pc <- kerlikelihood(
-    x = x, family = "gaussian", likapprox = "ni", engine = "primarycensored"
-  )
-  expect_equal(m_pc$loglik(v, x), m_int$loglik(v, x))
-})
-
-test_that("kerlikelihood engine silently falls back for mc approximation", {
-  # mc branch is not wired to primarycensored; the engine argument should be
-  # accepted without error and produce the same result as the integrate path.
+test_that("gaussian ni matches the legacy integrate-based reference", {
+  # Regression lock: the production dprimarycensored path must agree with a
+  # direct reconstruction of the removed stats::integrate() inner loop. This
+  # keeps the previous algorithm reproducible from one test-local helper and
+  # flags any drift in a future refactor. Gaussian is used because it has no
+  # closed-form pcens_cdf method inside primarycensored, so the agreement is
+  # strictly numerical.
+  skip_if_no_primarycensored()
   x <- make_double_data()
   v <- c(1.5, log(0.8))
-  m_int <- kerlikelihood(
-    x = x, family = "gaussian", likapprox = "mc", engine = "integrate"
-  )
-  m_pc <- kerlikelihood(
-    x = x, family = "gaussian", likapprox = "mc", engine = "primarycensored"
-  )
-  set.seed(20260413L)
-  a <- m_int$loglik(v, x)
-  set.seed(20260413L)
-  b <- m_pc$loglik(v, x)
-  expect_equal(a, b)
-})
 
-test_that("kerlikelihood engine argument is validated via match.arg", {
-  x <- make_double_data()
-  expect_error(
-    kerlikelihood(
-      x = x, family = "gaussian", likapprox = "ni", engine = "nonsense"
-    )
+  m <- kerlikelihood(x = x, family = "gaussian", likapprox = "ni")
+  expect_equal(
+    m$loglik(v, x),
+    kerlik_integrate_reference_gaussian(v, x),
+    tolerance = 1e-8
   )
 })
 
-test_that("parfitml default engine still fits gamma end-to-end", {
+test_that("parfitml fits gamma end-to-end on doubly censored data", {
   set.seed(42L)
   n <- 30L
   # Simulate doubly interval-censored gamma data. Use narrow primary windows
@@ -241,7 +211,7 @@ test_that("parfitml default engine still fits gamma end-to-end", {
   expect_equal(fit$censtype, "double")
 })
 
-test_that("primarycensored engine handles mixed pwindow rows", {
+test_that("kerlikelihood handles mixed pwindow rows", {
   skip_if_no_primarycensored()
   # Mix two distinct primary windows (1 and 2) so the group-by logic in
   # build_pc_loglik() has to dispatch more than one dprimarycensored call.
@@ -254,44 +224,11 @@ test_that("primarycensored engine handles mixed pwindow rows", {
   stopifnot(length(unique(x$x1r - x$x1l)) == 2L)
 
   v <- c(1.5, log(0.8))
-  m_int <- kerlikelihood(
-    x = x, family = "gaussian", likapprox = "ni", engine = "integrate"
+  m <- kerlikelihood(x = x, family = "gaussian", likapprox = "ni")
+
+  expected <- kerlik_loglik_via_dprimarycensored(
+    x = x, pdist = stats::pnorm,
+    pars = list(mean = v[1], sd = exp(v[2]))
   )
-  m_pc <- kerlikelihood(
-    x = x, family = "gaussian", likapprox = "ni", engine = "primarycensored"
-  )
-  expect_equal(m_pc$loglik(v, x), m_int$loglik(v, x), tolerance = 1e-8)
-})
-
-test_that("gaussian dprimarycensored matches per-row kerlikelihood contribution", {
-  skip_if_no_primarycensored()
-  x <- make_double_data()
-  v <- c(1.5, log(0.8))
-  mean_par <- v[1]
-  sd_par <- exp(v[2])
-
-  # Per-row contribution from kerlikelihood: recompute the inner integral by
-  # hand so we have a per-row vector (m$loglik only returns the sum).
-  n <- nrow(x)
-  per_row_kerlik <- vapply(seq_len(n), function(i) {
-    h <- function(t1) {
-      stats::pnorm(x$x2r[i] - t1, mean = mean_par, sd = sd_par) -
-        stats::pnorm(x$x2l[i] - t1, mean = mean_par, sd = sd_par)
-    }
-    integral <- stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value
-    integral / (x$x1r[i] - x$x1l[i])
-  }, numeric(1))
-
-  per_row_dprim <- vapply(seq_len(n), function(i) {
-    primarycensored::dprimarycensored(
-      x = x$x2l[i] - x$x1l[i],
-      pdist = stats::pnorm,
-      pwindow = x$x1r[i] - x$x1l[i],
-      swindow = x$x2r[i] - x$x2l[i],
-      mean = mean_par,
-      sd = sd_par
-    )
-  }, numeric(1))
-
-  expect_equal(per_row_dprim, per_row_kerlik, tolerance = 1e-8)
+  expect_equal(m$loglik(v, x), expected, tolerance = 1e-8)
 })
