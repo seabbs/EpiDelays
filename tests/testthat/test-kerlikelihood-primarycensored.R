@@ -47,18 +47,134 @@ kerlik_inner_via_primarycensored <- function(x, pdist, ...) {
   }, numeric(1))
 }
 
-test_that("gaussian double-interval ni matches pprimarycensored", {
+# CDF wrapper for pskewnorm with a signature compatible with
+# primarycensored::pprimarycensored (which calls pdist(q, ...)).
+pskewnorm_cdf <- function(q, location, scale, slant) {
+  EpiDelays::pskewnorm(x = q, par1 = location, par2 = scale, par3 = slant)
+}
+
+# Parametric family configurations. Each entry describes the family-specific
+# bits needed to (a) evaluate kerlikelihood and (b) call pprimarycensored with
+# the matching CDF and parameters.
+family_cases <- list(
+  gaussian = list(
+    v = c(1.5, log(0.8)),
+    pdist = stats::pnorm,
+    pars = list(mean = 1.5, sd = 0.8)
+  ),
+  gamma = list(
+    v = c(log(2), log(0.5)),
+    pdist = stats::pgamma,
+    pars = list(shape = 2, rate = 0.5)
+  ),
+  lognormal = list(
+    v = c(0.5, log(0.4)),
+    pdist = stats::plnorm,
+    pars = list(meanlog = 0.5, sdlog = 0.4)
+  ),
+  weibull = list(
+    v = c(log(2), log(2)),
+    pdist = stats::pweibull,
+    pars = list(shape = 2, scale = 2)
+  ),
+  skewnorm = list(
+    v = c(1, log(1), 2),
+    pdist = pskewnorm_cdf,
+    pars = list(location = 1, scale = 1, slant = 2)
+  )
+)
+
+for (fam in names(family_cases)) {
+  local({
+    family <- fam
+    case <- family_cases[[family]]
+
+    test_that(sprintf("%s double-interval ni matches pprimarycensored", family), {
+      skip_if_no_primarycensored()
+      x <- make_double_data()
+
+      m <- kerlikelihood(x = x, family = family, likapprox = "ni")
+      ker_value <- m$loglik(case$v, x)
+
+      inner <- do.call(
+        kerlik_inner_via_primarycensored,
+        c(list(x = x, pdist = case$pdist), case$pars)
+      )
+      expected <- sum(log(inner))
+
+      expect_equal(ker_value, expected, tolerance = 1e-8)
+    })
+
+    test_that(sprintf("%s double-interval mc matches pprimarycensored", family), {
+      skip_if_no_primarycensored()
+      x <- make_double_data()
+
+      inner <- do.call(
+        kerlik_inner_via_primarycensored,
+        c(list(x = x, pdist = case$pdist), case$pars)
+      )
+      expected <- sum(log(inner))
+
+      # kerlikelihood's mc closure uses stats::runif internally; seeding the
+      # global RNG immediately before the call pins the Monte Carlo draws and
+      # keeps the test reproducible. With M = 1000 samples per row and 5 rows
+      # the summed log-likelihood sits well within 5e-2 of the ni target for
+      # all families tested here.
+      m <- kerlikelihood(x = x, family = family, likapprox = "mc")
+      set.seed(20260413L)
+      ker_value <- m$loglik(case$v, x)
+
+      expect_equal(ker_value, expected, tolerance = 5e-2)
+    })
+
+    test_that(sprintf("%s single-interval matches F(xr) - F(xl)", family), {
+      x_double <- make_double_data()
+      # Reuse the existing interval for the secondary event as a single
+      # interval-censored observation (xl, xr) — positive throughout so the
+      # gamma/lognormal/weibull supports are respected.
+      x <- data.frame(xl = x_double$x2l, xr = x_double$x2r)
+
+      m <- kerlikelihood(x = x, family = family, likapprox = "ni")
+      ker_value <- m$loglik(case$v, x)
+
+      Fl <- do.call(case$pdist, c(list(x$xl), case$pars))
+      Fr <- do.call(case$pdist, c(list(x$xr), case$pars))
+      expected <- sum(log(Fr - Fl))
+
+      expect_equal(ker_value, expected, tolerance = 1e-10)
+    })
+  })
+}
+
+test_that("gaussian dprimarycensored matches per-row kerlikelihood contribution", {
   skip_if_no_primarycensored()
   x <- make_double_data()
-  v <- c(1.5, log(0.8))  # unbounded-space params: mean=1.5, sd=0.8
+  v <- c(1.5, log(0.8))
+  mean_par <- v[1]
+  sd_par <- exp(v[2])
 
-  m <- kerlikelihood(x = x, family = "gaussian", likapprox = "ni")
-  ker_value <- m$loglik(v, x)
+  # Per-row contribution from kerlikelihood: recompute the inner integral by
+  # hand so we have a per-row vector (m$loglik only returns the sum).
+  n <- nrow(x)
+  per_row_kerlik <- vapply(seq_len(n), function(i) {
+    h <- function(t1) {
+      stats::pnorm(x$x2r[i] - t1, mean = mean_par, sd = sd_par) -
+        stats::pnorm(x$x2l[i] - t1, mean = mean_par, sd = sd_par)
+    }
+    integral <- stats::integrate(h, lower = x$x1l[i], upper = x$x1r[i])$value
+    integral / (x$x1r[i] - x$x1l[i])
+  }, numeric(1))
 
-  inner <- kerlik_inner_via_primarycensored(
-    x, pdist = stats::pnorm, mean = v[1], sd = exp(v[2])
-  )
-  expected <- sum(log(inner))
+  per_row_dprim <- vapply(seq_len(n), function(i) {
+    primarycensored::dprimarycensored(
+      x = x$x2l[i] - x$x1l[i],
+      pdist = stats::pnorm,
+      pwindow = x$x1r[i] - x$x1l[i],
+      swindow = x$x2r[i] - x$x2l[i],
+      mean = mean_par,
+      sd = sd_par
+    )
+  }, numeric(1))
 
-  expect_equal(ker_value, expected, tolerance = 1e-8)
+  expect_equal(per_row_dprim, per_row_kerlik, tolerance = 1e-8)
 })
