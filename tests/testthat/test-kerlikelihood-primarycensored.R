@@ -146,6 +146,101 @@ for (fam in names(family_cases)) {
   })
 }
 
+for (fam in names(family_cases)) {
+  local({
+    family <- fam
+    case <- family_cases[[family]]
+
+    test_that(sprintf(
+      "%s kerlikelihood engine primarycensored matches integrate", family
+    ), {
+      skip_if_no_primarycensored()
+      x <- make_double_data()
+
+      m_int <- kerlikelihood(
+        x = x, family = family, likapprox = "ni", engine = "integrate"
+      )
+      m_pc <- kerlikelihood(
+        x = x, family = family, likapprox = "ni", engine = "primarycensored"
+      )
+
+      expect_equal(
+        m_pc$loglik(case$v, x),
+        m_int$loglik(case$v, x),
+        tolerance = 1e-8
+      )
+    })
+  })
+}
+
+test_that("kerlikelihood engine defaults to integrate", {
+  x <- make_double_data()
+  m_default <- kerlikelihood(x = x, family = "gaussian", likapprox = "ni")
+  m_int <- kerlikelihood(
+    x = x, family = "gaussian", likapprox = "ni", engine = "integrate"
+  )
+  v <- c(1.5, log(0.8))
+  expect_equal(m_default$loglik(v, x), m_int$loglik(v, x))
+})
+
+test_that("kerlikelihood engine silently falls back for single interval", {
+  # nc == 2: primarycensored engine must be ignored (no primary window).
+  x <- data.frame(xl = c(1, 2, 3), xr = c(2, 3, 4))
+  v <- c(1.5, log(0.8))
+  m_int <- kerlikelihood(
+    x = x, family = "gaussian", likapprox = "ni", engine = "integrate"
+  )
+  m_pc <- kerlikelihood(
+    x = x, family = "gaussian", likapprox = "ni", engine = "primarycensored"
+  )
+  expect_equal(m_pc$loglik(v, x), m_int$loglik(v, x))
+})
+
+test_that("kerlikelihood engine silently falls back for mc approximation", {
+  # mc branch is not wired to primarycensored; the engine argument should be
+  # accepted without error and produce the same result as the integrate path.
+  x <- make_double_data()
+  v <- c(1.5, log(0.8))
+  m_int <- kerlikelihood(
+    x = x, family = "gaussian", likapprox = "mc", engine = "integrate"
+  )
+  m_pc <- kerlikelihood(
+    x = x, family = "gaussian", likapprox = "mc", engine = "primarycensored"
+  )
+  set.seed(20260413L)
+  a <- m_int$loglik(v, x)
+  set.seed(20260413L)
+  b <- m_pc$loglik(v, x)
+  expect_equal(a, b)
+})
+
+test_that("kerlikelihood engine argument is validated via match.arg", {
+  x <- make_double_data()
+  expect_error(
+    kerlikelihood(
+      x = x, family = "gaussian", likapprox = "ni", engine = "nonsense"
+    )
+  )
+})
+
+test_that("parfitml default engine still fits gamma end-to-end", {
+  set.seed(42L)
+  n <- 30L
+  # Simulate doubly interval-censored gamma data. Use narrow primary windows
+  # and small secondary windows so the fit converges quickly with few
+  # bootstrap iterations.
+  x1l <- sort(stats::runif(n, 0, 2))
+  x1r <- x1l + stats::runif(n, 0.2, 0.8)
+  true_draw <- stats::rgamma(n, shape = 3, rate = 1)
+  x2l <- x1l + true_draw
+  x2r <- x2l + stats::runif(n, 0.2, 0.8)
+  x <- data.frame(x1l = x1l, x1r = x1r, x2l = x2l, x2r = x2r)
+
+  fit <- parfitml(x = x, family = "gamma", Bboot = 10L, pgbar = FALSE)
+  expect_true(fit$mleconv)
+  expect_equal(fit$censtype, "double")
+})
+
 test_that("gaussian dprimarycensored matches per-row kerlikelihood contribution", {
   skip_if_no_primarycensored()
   x <- make_double_data()
