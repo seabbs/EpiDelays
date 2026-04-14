@@ -83,9 +83,11 @@ test_that("parfitml skewnorm converges on a small negative-skew sample", {
   swindow <- 1
   delays <- primarycensored::rprimarycensored(
     n = n,
-    rdist = function(n) EpiDelays::qskewnorm(
-      stats::runif(n), par1 = 1, par2 = 1, par3 = 2
-    ),
+    rdist = function(n) {
+      EpiDelays::qskewnorm(
+        stats::runif(n), par1 = 1, par2 = 1, par3 = 2
+      )
+    },
     pwindow = pwindow,
     swindow = swindow
   )

@@ -205,7 +205,7 @@ test_that("parfitml fits gamma end-to-end on doubly censored data", {
 
   fit <- parfitml(x = x, family = "gamma", Bboot = 10L, pgbar = FALSE)
   expect_true(fit$mleconv)
-  expect_equal(fit$censtype, "double")
+  expect_identical(fit$censtype, "double")
 })
 
 test_that("kerlikelihood handles mixed pwindow rows", {
