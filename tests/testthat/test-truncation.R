@@ -112,6 +112,62 @@ test_that("nc==4 truncation subtracts per-row log(F_cens(D) - F_cens(L))", {
   expect_equal(m$loglik(v, x), expected, tolerance = 1e-8)
 })
 
+test_that("nc==4 ni clamps left-straddle rows to L", {
+  skip_if_no_primarycensored()
+  # Row whose secondary window straddles the left truncation point: the
+  # observed lower bound x2l - x1l = 0.6 sits below L = 1, but the upper
+  # bound x2r - x1l = 1.5 is inside [L, D]. The old pprimarycensored
+  # truncated path clamped (lower, upper) to [L, D]; the unified
+  # dprimarycensored path must preserve that semantics or every optim step
+  # on a dataset containing such a row would crash inside primarycensored.
+  L <- 1
+  D <- 10
+  x <- data.frame(x1l = 0, x1r = 0.5, x2l = 0.6, x2r = 1.5)
+  v <- log(c(2, 0.5))
+  m <- kerlikelihood(x = x, family = "gamma", likapprox = "ni", L = L, D = D)
+  ker_value <- m$loglik(v, x)
+  expect_true(is.finite(ker_value))
+
+  # Oracle: clamp lower to L, recompute swindow, hand to dprimarycensored
+  # row-by-row. This is the same arithmetic as the old pprimarycensored
+  # path but using the dpcens API directly.
+  lower_c <- pmax(x$x2l - x$x1l, L)
+  upper_c <- pmin(x$x2r - x$x1l, D)
+  expected <- primarycensored::dprimarycensored(
+    x = lower_c,
+    pdist = stats::pgamma,
+    pwindow = x$x1r - x$x1l,
+    swindow = upper_c - lower_c,
+    L = L, D = D, log = TRUE,
+    shape = 2, rate = 0.5
+  )
+  expect_equal(ker_value, sum(expected), tolerance = 1e-10)
+})
+
+test_that("nc==4 ni clamps right-straddle rows to D", {
+  skip_if_no_primarycensored()
+  # Symmetric case: x2r - x1l = 11 sits above D = 10, lower stays inside.
+  L <- 0.5
+  D <- 10
+  x <- data.frame(x1l = 0, x1r = 0.5, x2l = 5, x2r = 11)
+  v <- log(c(2, 0.5))
+  m <- kerlikelihood(x = x, family = "gamma", likapprox = "ni", L = L, D = D)
+  ker_value <- m$loglik(v, x)
+  expect_true(is.finite(ker_value))
+
+  lower_c <- pmax(x$x2l - x$x1l, L)
+  upper_c <- pmin(x$x2r - x$x1l, D)
+  expected <- primarycensored::dprimarycensored(
+    x = lower_c,
+    pdist = stats::pgamma,
+    pwindow = x$x1r - x$x1l,
+    swindow = upper_c - lower_c,
+    L = L, D = D, log = TRUE,
+    shape = 2, rate = 0.5
+  )
+  expect_equal(ker_value, sum(expected), tolerance = 1e-10)
+})
+
 test_that("nc==2 truncation matches closed-form truncated CDF", {
   skip_if_no_primarycensored()
   x <- data.frame(
