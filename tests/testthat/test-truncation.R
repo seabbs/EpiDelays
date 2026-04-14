@@ -32,9 +32,7 @@ make_double_data <- function(seed = 1L, n = 5L) {
 trunc_family_cases <- list(
   gaussian = list(
     v = c(1.5, log(0.8)),
-    # Gaussian is interpreted as zero-truncated inside kerlikelihood(), so
-    # the oracle uses the same wrapper.
-    pdist = ptruncnorm_nonneg,
+    pdist = stats::pnorm,
     pars = list(mean = 1.5, sd = 0.8)
   ),
   gamma = list(
@@ -89,13 +87,12 @@ test_that("nc==4 truncation subtracts per-row log(F_cens(D) - F_cens(L))", {
   x <- x_all[keep, ]
   expect_gt(nrow(x), 0L)
 
-  # Oracle: call dprimarycensored() directly row-by-row with L, D. The
-  # gaussian family is zero-truncated inside kerlikelihood(), so the oracle
-  # uses the same ptruncnorm_nonneg wrapper as pdist.
+  # Oracle: call dprimarycensored() directly row-by-row with L, D against
+  # the same raw stats::pnorm CDF that kerlikelihood() forwards.
   expected <- sum(vapply(seq_len(nrow(x)), function(i) {
     primarycensored::dprimarycensored(
       x = x$x2l[i] - x$x1l[i],
-      pdist = ptruncnorm_nonneg,
+      pdist = stats::pnorm,
       pwindow = x$x1r[i] - x$x1l[i],
       swindow = x$x2r[i] - x$x2l[i],
       L = L,
@@ -112,58 +109,71 @@ test_that("nc==4 truncation subtracts per-row log(F_cens(D) - F_cens(L))", {
   expect_equal(m$loglik(v, x), expected, tolerance = 1e-8)
 })
 
-test_that("nc==4 ni clamps left-straddle rows to L", {
+test_that("nc==4 ni drops left-straddle rows with a warning", {
   skip_if_no_primarycensored()
-  # Row whose secondary window straddles the left truncation point: the
-  # observed lower bound x2l - x1l = 0.6 sits below L = 1 while the upper
-  # bound x2r - x1l = 1.5 is inside [L, D]. Without clamping the loglik
-  # closure hands x = 0.6 to dprimarycensored and primarycensored aborts
-  # with "Some values of x are below L", which would crash every optim
-  # step on a dataset containing such a row.
+  # Mix one fully-inside row with a left-straddle row whose observed lower
+  # x2l - x1l = 0.6 sits below L = 1. dprimarycensored cannot evaluate a
+  # window that crosses L, so the straddle row must be dropped (with a
+  # warning advising the caller) before the inner loop runs. The fit then
+  # proceeds on the surviving row alone.
   L <- 1
   D <- 10
-  x <- data.frame(x1l = 0, x1r = 0.5, x2l = 0.6, x2r = 1.5)
+  x <- data.frame(
+    x1l = c(0, 0),
+    x1r = c(0.5, 0.5),
+    x2l = c(2, 0.6),
+    x2r = c(3, 1.5)
+  )
   v <- log(c(2, 0.5))
-  m <- kerlikelihood(x = x, family = "gamma", likapprox = "ni", L = L, D = D)
-  ker_value <- m$loglik(v, x)
+  expect_warning(
+    m <- kerlikelihood(
+      x = x, family = "gamma", likapprox = "ni", L = L, D = D
+    ),
+    regexp = "straddle"
+  )
+  expect_identical(nrow(m$x), 1L)
+  ker_value <- m$loglik(v, m$x)
   expect_true(is.finite(ker_value))
 
-  # Oracle: clamp lower to L, recompute swindow, evaluate dprimarycensored
-  # row-by-row. This expresses the intended visible-window semantics
-  # directly through the dpcens API.
-  lower_c <- pmax(x$x2l - x$x1l, L)
-  upper_c <- pmin(x$x2r - x$x1l, D)
   expected <- primarycensored::dprimarycensored(
-    x = lower_c,
+    x = m$x$x2l - m$x$x1l,
     pdist = stats::pgamma,
-    pwindow = x$x1r - x$x1l,
-    swindow = upper_c - lower_c,
+    pwindow = m$x$x1r - m$x$x1l,
+    swindow = m$x$x2r - m$x$x2l,
     L = L, D = D, log = TRUE,
     shape = 2, rate = 0.5
   )
   expect_equal(ker_value, sum(expected), tolerance = 1e-10)
 })
 
-test_that("nc==4 ni clamps right-straddle rows to D", {
+test_that("nc==4 ni drops right-straddle rows with a warning", {
   skip_if_no_primarycensored()
-  # Symmetric case: x2r - x1l = 11 sits above D = 10, lower stays inside.
-  # Without clamping primarycensored aborts with "Upper truncation point
-  # is greater than D".
+  # Symmetric case: x2r - x1l = 11 sits above D = 10. The straddle row is
+  # dropped with a warning and the fit continues on the in-bounds row.
   L <- 0.5
   D <- 10
-  x <- data.frame(x1l = 0, x1r = 0.5, x2l = 5, x2r = 11)
+  x <- data.frame(
+    x1l = c(0, 0),
+    x1r = c(0.5, 0.5),
+    x2l = c(2, 5),
+    x2r = c(3, 11)
+  )
   v <- log(c(2, 0.5))
-  m <- kerlikelihood(x = x, family = "gamma", likapprox = "ni", L = L, D = D)
-  ker_value <- m$loglik(v, x)
+  expect_warning(
+    m <- kerlikelihood(
+      x = x, family = "gamma", likapprox = "ni", L = L, D = D
+    ),
+    regexp = "straddle"
+  )
+  expect_identical(nrow(m$x), 1L)
+  ker_value <- m$loglik(v, m$x)
   expect_true(is.finite(ker_value))
 
-  lower_c <- pmax(x$x2l - x$x1l, L)
-  upper_c <- pmin(x$x2r - x$x1l, D)
   expected <- primarycensored::dprimarycensored(
-    x = lower_c,
+    x = m$x$x2l - m$x$x1l,
     pdist = stats::pgamma,
-    pwindow = x$x1r - x$x1l,
-    swindow = upper_c - lower_c,
+    pwindow = m$x$x1r - m$x$x1l,
+    swindow = m$x$x2r - m$x$x2l,
     L = L, D = D, log = TRUE,
     shape = 2, rate = 0.5
   )
@@ -295,35 +305,58 @@ test_that("parfitml single-interval recovers gamma under truncation", {
   expect_lt(abs(rate_hat - rate_true) / rate_true, 0.15)
 })
 
-test_that("parfitml rejects rows incompatible with nc==4 truncation", {
+test_that("parfitml warns and drops nc==4 rows incompatible with [L, D]", {
   skip_if_no_primarycensored()
-  x <- data.frame(
-    x1l = c(0, 0),
-    x1r = c(1, 1),
-    # second row has x2l - x1l = 12 > D = 10 so entire interval is past D
-    x2l = c(2, 12),
-    x2r = c(3, 13)
+  set.seed(20260414L)
+  # A handful of in-bounds rows alongside one row whose secondary window
+  # falls entirely past D. The straddle-row drop in kerlikelihood() keeps
+  # the fit alive on the survivors and surfaces a warning so the caller
+  # knows observations were excluded.
+  n_keep <- 30L
+  x_keep <- data.frame(
+    x1l = sort(stats::runif(n_keep, 0, 5)),
+    x1r = NA, x2l = NA, x2r = NA
   )
-  expect_error(
-    parfitml(
+  x_keep$x1r <- x_keep$x1l + 1
+  x_keep$x2l <- x_keep$x1l + stats::rgamma(n_keep, 3, 1)
+  x_keep$x2r <- x_keep$x2l + 1
+  x_keep <- x_keep[
+    (x_keep$x2l - x_keep$x1l) >= 1 & (x_keep$x2r - x_keep$x1l) <= 10,
+  ]
+  x_bad <- data.frame(x1l = 0, x1r = 1, x2l = 12, x2r = 13)
+  x <- rbind(x_keep, x_bad)
+  expect_warning(
+    fit <- parfitml(
       x = x, family = "gamma", Bboot = 2L, pgbar = FALSE, L = 1, D = 10
     ),
-    regexp = "truncation"
+    regexp = "straddle"
   )
+  expect_true(fit$mleconv)
+  expect_identical(fit$n, nrow(x_keep))
 })
 
-test_that("parfitml rejects rows incompatible with nc==2 truncation", {
+test_that("parfitml warns and drops nc==2 rows incompatible with [L, D]", {
   skip_if_no_primarycensored()
-  x <- data.frame(
-    xl = c(2, 0.1),
-    xr = c(3, 0.4)  # fully below L
+  set.seed(20260415L)
+  # In-bounds rows plus one row that falls fully below L. The fit should
+  # warn, drop the offending row, and converge on the rest.
+  delays <- stats::rgamma(40L, shape = 3, rate = 1)
+  delays <- delays[delays >= 1 & delays <= 10]
+  x_keep <- data.frame(
+    xl = pmax(floor(delays), 1),
+    xr = pmin(floor(delays) + 1, 10)
   )
-  expect_error(
-    parfitml(
+  x_keep <- x_keep[x_keep$xl < x_keep$xr, ]
+  x_bad <- data.frame(xl = 0.1, xr = 0.4)  # fully below L
+  x <- rbind(x_keep, x_bad)
+  expect_warning(
+    fit <- parfitml(
       x = x, family = "gamma", Bboot = 2L, pgbar = FALSE, L = 1, D = 10
     ),
-    regexp = "truncation"
+    regexp = "straddle"
   )
+  expect_true(fit$mleconv)
+  expect_identical(fit$n, nrow(x_keep))
 })
 
 test_that("boundary parity: x2r - x1l == D yields finite loglik", {

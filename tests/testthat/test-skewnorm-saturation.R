@@ -4,9 +4,10 @@
 # a hair outside [0, 1] or slightly non-monotone on sorted inputs due to
 # floating-point noise in Owen's T. primarycensored::check_pdist rejects
 # such CDFs, which previously aborted parfitml() on the skewnorm family for
-# unlucky small-sample benchmarks. The fix in kerlikelihood() wraps
-# pskewnorm with a clamp-and-cummax, and parfitmom()'s skewnorm seed uses a
-# signed cube root so negative sample skew does not seed optim with NaN.
+# unlucky small-sample benchmarks. pskewnorm() clamps to [0, 1] and lifts
+# rounding-noise dips with cummax over the order of x; parfitmom()'s
+# skewnorm seed uses a signed cube root so negative sample skew does not
+# seed optim with NaN.
 
 test_that("kerlikelihood skewnorm ni branch tolerates saturation (narrow)", {
   skip_if_no_primarycensored()
@@ -39,6 +40,33 @@ test_that("kerlikelihood skewnorm ni branch tolerates saturation (shifted)", {
   # Far-from-data location with a large negative slant. The resulting CDF
   # is evaluated at quantiles deep in the tail where Owen's T noise is
   # worst; without the clamp-and-cummax wrapper check_pdist aborts.
+  val <- m$loglik(c(50, log(10), -5), x)
+  expect_true(is.finite(val))
+})
+
+test_that("kerlikelihood skewnorm ni branch tolerates saturation under L/D", {
+  skip_if_no_primarycensored()
+  set.seed(3L)
+  n <- 12L
+  # Every row's secondary window sits safely inside [L, D] so the
+  # straddle-row drop does not mask the saturation path. Far-from-data
+  # location combined with a large negative slant places the data deep in
+  # the skewnorm's left tail where Owen's T returns rounding-noise CDF
+  # values; the non-default truncation bounds force dprimarycensored to
+  # additionally evaluate F_cens(L) and F_cens(D) on the same saturating
+  # CDF. Without pskewnorm's internal clamp-and-cummax check_pdist would
+  # abort the call.
+  x <- data.frame(
+    x1l = 0:(n - 1L),
+    x1r = 1:n,
+    x2l = (1:n) + 1 + stats::runif(n, 0, 0.2),
+    x2r = (1:n) + 1.5 + stats::runif(n, 0, 0.2)
+  )
+  L <- 0.5
+  D <- 100
+  m <- kerlikelihood(
+    x = x, family = "skewnorm", likapprox = "ni", L = L, D = D
+  )
   val <- m$loglik(c(50, log(10), -5), x)
   expect_true(is.finite(val))
 })
