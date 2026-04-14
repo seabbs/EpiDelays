@@ -195,17 +195,13 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
   }
   # Shared loglik builder for the doubly interval-censored ni branch. Given a
   # CDF and a function that extracts a named parameter list from `v`, returns
-  # a closure that sums the per-row log-density from primarycensored. Rows
-  # are grouped by (pwindow, swindow) because both arguments are scalar in
-  # primarycensored::dprimarycensored / pprimarycensored.
-  #
-  # With the default L = 0, D = Inf bounds the closure dispatches to
-  # dprimarycensored, which deduplicates CDF evaluations internally. When
-  # non-default truncation is requested it switches to a grouped
-  # pprimarycensored call so the observed interval can be clamped to
-  # [L, D] per row. Both paths forward the user-supplied dprimary /
-  # dprimary_args to primarycensored.
-  loglik_needs_truncation <- L > 0 || is.finite(D)
+  # a closure that sums the per-row log-density from
+  # primarycensored::dprimarycensored(). Rows are grouped by (pwindow,
+  # swindow) because both are scalar arguments in dprimarycensored. L and D
+  # are forwarded unchanged: the default bounds (L = 0, D = Inf) reduce to
+  # the untruncated call and non-default bounds pick up the
+  # F_cens(D) - F_cens(L) renormaliser inside primarycensored. The
+  # user-supplied dprimary / dprimary_args are forwarded too.
   build_pc_loglik <- function(pdist, pars_fn) {
     force(pdist)
     force(pars_fn)
@@ -213,78 +209,33 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
     # loop automatically re-use whatever dprimary the user passed in.
     dprimary_local <- dprimary
     dprimary_args_local <- dprimary_args
-    if (!loglik_needs_truncation) {
-      return(function(v, x) {
-        pars <- pars_fn(v)
-        pwindows <- x$x1r - x$x1l
-        swindows <- x$x2r - x$x2l
-        lowers <- x$x2l - x$x1l
-        groups <- split(
-          seq_along(lowers), list(pwindows, swindows), drop = TRUE
-        )
-        z <- 0
-        for (idx in groups) {
-          pw <- pwindows[idx[1]]
-          sw <- swindows[idx[1]]
-          logd <- do.call(
-            primarycensored::dprimarycensored,
-            c(
-              list(
-                x = lowers[idx], pdist = pdist,
-                pwindow = pw, swindow = sw,
-                dprimary = dprimary_local,
-                dprimary_args = dprimary_args_local,
-                log = TRUE
-              ),
-              pars
-            )
-          )
-          z <- z + sum(logd)
-        }
-        z
-      })
-    }
-    # Truncated path: clamp (lo, hi) to [L, D] and call pprimarycensored,
-    # which already applies the F_cens(D) - F_cens(L) renormaliser. A
-    # tryCatch wraps the primarycensored call so that optim can step away
-    # from parameter regions where check_pdist rejects the user-supplied
-    # CDF wrapper (this protects against transient numerical artefacts in
-    # e.g. pskewnorm at extreme slant values).
     function(v, x) {
       pars <- pars_fn(v)
       pwindows <- x$x1r - x$x1l
-      lowers_raw <- x$x2l - x$x1l
-      uppers_raw <- x$x2r - x$x1l
-      lowers <- pmax(L, lowers_raw)
-      uppers <- pmin(D, uppers_raw)
-      groups <- split(seq_along(lowers), pwindows, drop = TRUE)
+      swindows <- x$x2r - x$x2l
+      lowers <- x$x2l - x$x1l
+      groups <- split(
+        seq_along(lowers), list(pwindows, swindows), drop = TRUE
+      )
       z <- 0
       for (idx in groups) {
         pw <- pwindows[idx[1]]
-        qs <- c(lowers[idx], uppers[idx])
-        cdf_vals <- tryCatch(
-          do.call(
-            primarycensored::pprimarycensored,
-            c(
-              list(
-                q = qs, pdist = pdist, pwindow = pw, L = L, D = D,
-                dprimary = dprimary_local,
-                dprimary_args = dprimary_args_local
-              ),
-              pars
-            )
-          ),
-          error = function(e) NULL
+        sw <- swindows[idx[1]]
+        logd <- do.call(
+          primarycensored::dprimarycensored,
+          c(
+            list(
+              x = lowers[idx], pdist = pdist,
+              pwindow = pw, swindow = sw,
+              L = L, D = D,
+              dprimary = dprimary_local,
+              dprimary_args = dprimary_args_local,
+              log = TRUE
+            ),
+            pars
+          )
         )
-        if (is.null(cdf_vals) || anyNA(cdf_vals)) {
-          return(-1e18)
-        }
-        nidx <- length(idx)
-        diffs <- cdf_vals[(nidx + 1):(2 * nidx)] - cdf_vals[1:nidx]
-        if (!all(is.finite(diffs)) || any(diffs <= 0)) {
-          return(-1e18)
-        }
-        z <- z + sum(log(diffs))
+        z <- z + sum(logd)
       }
       z
     }
