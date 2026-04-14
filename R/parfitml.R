@@ -77,6 +77,10 @@ parfitml <- function(x, family, Bboot = 1000, pgbar = TRUE,
   m <- kerlikelihood(x = x, family = family, L = L, D = D,
                      dprimary = dprimary,
                      dprimary_args = dprimary_args) # Model specification
+  # kerlikelihood drops rows incompatible with [L, D] and returns the
+  # surviving frame. Reuse it so the bootstrap, MoM seed, and reported
+  # sample size all agree on which rows the fit was conditioned on.
+  x <- m$x
   n <- nrow(x)
   np <- m$npars
   # parfitmom ignores dprimary and L/D; the moment-matching seed is known to

@@ -54,11 +54,10 @@ test_that("reprex (issue #1): gamma kerlikelihood == dprimarycensored", {
 })
 
 test_that("reprex (issue #1): gaussian kerlikelihood == dprimarycensored", {
-  # EpiDelays interprets the gaussian family as zero-truncated at zero, so
-  # we pass the truncated wrapper directly into dprimarycensored. With the
-  # wrapper in place there is no need to filter out delay = 0 rows or
-  # apply a hand-rolled F_cens(0) correction: the primary-censoring
-  # integral runs on the underlying non-negative truncated normal CDF.
+  # The gaussian family forwards stats::pnorm into dprimarycensored, so the
+  # production loglik must equal a single vectorised pc_loglik() call against
+  # the same CDF. kerdomain_check permits negative-supporting families on
+  # any data, so no row filter is required here.
   skip_if_no_primarycensored()
 
   set.seed(2L)
@@ -79,7 +78,7 @@ test_that("reprex (issue #1): gaussian kerlikelihood == dprimarycensored", {
 
   m <- kerlikelihood(x, family = "gaussian", likapprox = "ni")
   expect_equal(
-    pc_loglik(v, x, ptruncnorm_nonneg,
+    pc_loglik(v, x, stats::pnorm,
               function(v) list(mean = v[1], sd = exp(v[2]))),
     m$loglik(v, x),
     tolerance = 1e-8

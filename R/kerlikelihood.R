@@ -115,7 +115,6 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
   fset <- kerfamilies()
   fnames <- sapply(fset, "[[", "fname")
   famdesc <- fset[[match(family, fnames)]]
-  n <- nrow(x)
   nc <- ncol(x)
   if(nc == 2) {
     censtype <- "single"
@@ -128,13 +127,29 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
         "modelled"
       )
     }
-    # Reject rows whose observed interval cannot intersect [L, D].
-    if ((L > 0 || is.finite(D)) &&
-        (any(x$xr <= L) || any(x$xl >= D))) {
-      stop(
-        "Some rows of x are incompatible with the requested truncation ",
-        "bounds [L, D]: need xr > L and xl < D for every row."
-      )
+    # Drop any row whose observed interval is not fully inside [L, D]. The
+    # interval-censored likelihood treats each row's window as an indivisible
+    # quantum, so a row that straddles a truncation boundary cannot be
+    # interpreted under the truncated model. Warning the caller and removing
+    # the row keeps the fit going while making the loss explicit; the caller
+    # can re-run after narrowing the offending intervals.
+    if (L > 0 || is.finite(D)) {
+      keep <- x$xl >= L & x$xr <= D
+      if (!all(keep)) {
+        warning(
+          sum(!keep), " row(s) of x straddle or fall outside the truncation ",
+          "bounds [L, D] and have been dropped. Each row's interval ",
+          "[xl, xr] must satisfy xl >= L and xr <= D. To retain these ",
+          "observations, narrow their intervals before calling the fit."
+        )
+        x <- x[keep, , drop = FALSE]
+        if (nrow(x) == 0L) {
+          stop(
+            "No rows of x remain after dropping observations incompatible ",
+            "with the truncation bounds [L, D]."
+          )
+        }
+      }
     }
   } else if (nc == 4) {
     censtype <- "double"
@@ -147,21 +162,37 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
         "use likapprox = \"ni\" (the default)"
       )
     }
-    # Reject rows whose observed interval cannot intersect [L, D]. Rows that
-    # straddle the boundary are retained and clamped inside the loglik
-    # closures below.
+    # Drop rows whose secondary observation window is not fully inside
+    # [L, D]. The doubly-interval-censored likelihood passes the row's
+    # (lower, swindow) pair into primarycensored::dprimarycensored() with
+    # truncation bounds L and D; primarycensored requires the entire window
+    # to sit inside [L, D] and aborts otherwise. Rather than splitting a
+    # straddling window into a visible subset (which silently changes the
+    # observation), warn the caller and drop the row so the modelled and
+    # observed windows match.
     if (L > 0 || is.finite(D)) {
       lowers <- x$x2l - x$x1l
       uppers <- x$x2r - x$x1l
-      if (any(uppers <= L) || any(lowers >= D)) {
-        stop(
-          "Some rows of x are incompatible with the requested truncation ",
-          "bounds [L, D]: need x2r - x1l > L and x2l - x1l < D for every ",
-          "row."
+      keep <- lowers >= L & uppers <= D
+      if (!all(keep)) {
+        warning(
+          sum(!keep), " row(s) of x straddle or fall outside the truncation ",
+          "bounds [L, D] and have been dropped. Each row's secondary window ",
+          "must satisfy x2l - x1l >= L and x2r - x1l <= D. To retain these ",
+          "observations, narrow their secondary windows before calling the ",
+          "fit."
         )
+        x <- x[keep, , drop = FALSE]
+        if (nrow(x) == 0L) {
+          stop(
+            "No rows of x remain after dropping observations incompatible ",
+            "with the truncation bounds [L, D]."
+          )
+        }
       }
     }
   }
+  n <- nrow(x)
   # Helper: sum log-contributions for the single-interval (nc == 2) branch,
   # applying the truncation correction when L > 0 or D < Inf. Reduces to
   # sum(log(Fr - Fl)) in the default case, so the pre-existing code path is
@@ -195,17 +226,14 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
   }
   # Shared loglik builder for the doubly interval-censored ni branch. Given a
   # CDF and a function that extracts a named parameter list from `v`, returns
-  # a closure that sums the per-row log-density from primarycensored. Rows
-  # are grouped by (pwindow, swindow) because both arguments are scalar in
-  # primarycensored::dprimarycensored / pprimarycensored.
-  #
-  # With the default L = 0, D = Inf bounds the closure dispatches to
-  # dprimarycensored, which deduplicates CDF evaluations internally. When
-  # non-default truncation is requested it switches to a grouped
-  # pprimarycensored call so the observed interval can be clamped to
-  # [L, D] per row. Both paths forward the user-supplied dprimary /
-  # dprimary_args to primarycensored.
-  loglik_needs_truncation <- L > 0 || is.finite(D)
+  # a closure that sums the per-row log-density from
+  # primarycensored::dprimarycensored(). Rows are grouped by
+  # (pwindow, swindow) because dprimarycensored takes both as scalars and
+  # vectorises only over the lower bound x. The straddle-row drop in the
+  # nc==4 validation block above guarantees every surviving row sits fully
+  # inside [L, D], so the lower bound and swindow can be passed through
+  # without per-row adjustment. The user-supplied dprimary / dprimary_args
+  # are forwarded into primarycensored.
   build_pc_loglik <- function(pdist, pars_fn) {
     force(pdist)
     force(pars_fn)
@@ -213,96 +241,51 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
     # loop automatically re-use whatever dprimary the user passed in.
     dprimary_local <- dprimary
     dprimary_args_local <- dprimary_args
-    if (!loglik_needs_truncation) {
-      return(function(v, x) {
-        pars <- pars_fn(v)
-        pwindows <- x$x1r - x$x1l
-        swindows <- x$x2r - x$x2l
-        lowers <- x$x2l - x$x1l
-        groups <- split(
-          seq_along(lowers), list(pwindows, swindows), drop = TRUE
-        )
-        z <- 0
-        for (idx in groups) {
-          pw <- pwindows[idx[1]]
-          sw <- swindows[idx[1]]
-          logd <- do.call(
-            primarycensored::dprimarycensored,
-            c(
-              list(
-                x = lowers[idx], pdist = pdist,
-                pwindow = pw, swindow = sw,
-                dprimary = dprimary_local,
-                dprimary_args = dprimary_args_local,
-                log = TRUE
-              ),
-              pars
-            )
-          )
-          z <- z + sum(logd)
-        }
-        z
-      })
-    }
-    # Truncated path: clamp (lo, hi) to [L, D] and call pprimarycensored,
-    # which already applies the F_cens(D) - F_cens(L) renormaliser. A
-    # tryCatch wraps the primarycensored call so that optim can step away
-    # from parameter regions where check_pdist rejects the user-supplied
-    # CDF wrapper (this protects against transient numerical artefacts in
-    # e.g. pskewnorm at extreme slant values).
     function(v, x) {
       pars <- pars_fn(v)
       pwindows <- x$x1r - x$x1l
-      lowers_raw <- x$x2l - x$x1l
-      uppers_raw <- x$x2r - x$x1l
-      lowers <- pmax(L, lowers_raw)
-      uppers <- pmin(D, uppers_raw)
-      groups <- split(seq_along(lowers), pwindows, drop = TRUE)
+      lowers <- x$x2l - x$x1l
+      swindows <- x$x2r - x$x2l
+      groups <- split(
+        seq_along(lowers), list(pwindows, swindows), drop = TRUE
+      )
       z <- 0
       for (idx in groups) {
         pw <- pwindows[idx[1]]
-        qs <- c(lowers[idx], uppers[idx])
-        cdf_vals <- tryCatch(
-          do.call(
-            primarycensored::pprimarycensored,
-            c(
-              list(
-                q = qs, pdist = pdist, pwindow = pw, L = L, D = D,
-                dprimary = dprimary_local,
-                dprimary_args = dprimary_args_local
-              ),
-              pars
-            )
-          ),
-          error = function(e) NULL
+        sw <- swindows[idx[1]]
+        logd <- do.call(
+          primarycensored::dprimarycensored,
+          c(
+            list(
+              x = lowers[idx], pdist = pdist,
+              pwindow = pw, swindow = sw,
+              L = L, D = D,
+              dprimary = dprimary_local,
+              dprimary_args = dprimary_args_local,
+              log = TRUE
+            ),
+            pars
+          )
         )
-        if (is.null(cdf_vals) || anyNA(cdf_vals)) {
-          return(-1e18)
-        }
-        nidx <- length(idx)
-        diffs <- cdf_vals[(nidx + 1):(2 * nidx)] - cdf_vals[1:nidx]
-        if (!all(is.finite(diffs)) || any(diffs <= 0)) {
-          return(-1e18)
-        }
-        z <- z + sum(log(diffs))
+        z <- z + sum(logd)
       }
       z
     }
   }
   if (family == "gaussian") {
-    # Gaussian and skewnorm are interpreted as zero-truncated on the
-    # non-negative half-line. The truncated wrapper becomes the underlying
-    # delay CDF, so every code path (single-interval, mc, ni) routes through
-    # the same ptruncnorm_nonneg without a bespoke F_cens(0) correction.
+    # Gaussian uses the raw stats::pnorm CDF on the full real line. With the
+    # straddle-row drop above, primarycensored::dprimarycensored() sees only
+    # rows whose secondary window sits inside [L, D] and applies its own
+    # truncation correction via L and D.
     if(nc == 2) {
       loglik <- function(v, x) {
         # v: unbounded parameter
         par1 <- v[1]
         par2 <- exp(v[2])
-        Fl  <- ptruncnorm_nonneg(q = x$xl, mean = par1, sd = par2)
-        Fr  <- ptruncnorm_nonneg(q = x$xr, mean = par1, sd = par2)
-        FL  <- ptruncnorm_nonneg(q = L, mean = par1, sd = par2)
-        FD  <- ptruncnorm_nonneg(q = D, mean = par1, sd = par2)
+        Fl  <- stats::pnorm(q = x$xl, mean = par1, sd = par2)
+        Fr  <- stats::pnorm(q = x$xr, mean = par1, sd = par2)
+        FL  <- stats::pnorm(q = L, mean = par1, sd = par2)
+        FD  <- stats::pnorm(q = D, mean = par1, sd = par2)
         single_interval_sum(Fl, Fr, FL, FD)
       }
     } else if(nc == 4) {
@@ -315,16 +298,16 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
           z <- 0
           for(i in 1:n) {
             x1s <- stats::runif(n = M, min = x$x1l[i], max = x$x1r[i])
-            Fl  <- ptruncnorm_nonneg(q = x$x2l[i] - x1s, mean = par1, sd = par2)
-            Fr  <- ptruncnorm_nonneg(q = x$x2r[i] - x1s, mean = par1, sd = par2)
+            Fl  <- stats::pnorm(q = x$x2l[i] - x1s, mean = par1, sd = par2)
+            Fr  <- stats::pnorm(q = x$x2r[i] - x1s, mean = par1, sd = par2)
             z <- z + log(mean(Fr - Fl)) -
-              mc_row_correction(x1s, ptruncnorm_nonneg, pars)
+              mc_row_correction(x1s, stats::pnorm, pars)
           }
           z
         }
       } else if(likapprox == "ni") {
         loglik <- build_pc_loglik(
-          pdist = ptruncnorm_nonneg,
+          pdist = stats::pnorm,
           pars_fn = function(v) list(mean = v[1], sd = exp(v[2]))
         )
       }
@@ -335,24 +318,25 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
       z
     }
   }else if (family == "skewnorm") {
+    # Skewnorm uses the package-level pskewnorm() CDF, which is internally
+    # clamped to [0, 1] and monotonised over the order of x. Owen's T can
+    # otherwise return values a hair outside [0, 1] in saturating regions
+    # that optim sometimes visits, and check_pdist() inside primarycensored
+    # would then abort the fit. The thin wrapper renames the first argument
+    # so primarycensored can call it with the standard `q = ...` keyword.
+    pskewnorm_q <- function(q, par1, par2, par3) {
+      pskewnorm(x = q, par1 = par1, par2 = par2, par3 = par3)
+    }
     if(nc == 2) {
       loglik <- function(v, x) {
         # v: unbounded parameter
         par1 <- v[1]
         par2 <- exp(v[2])
         par3 <- v[3]
-        Fl <- ptruncskewnorm_nonneg(
-          q = x$xl, location = par1, scale = par2, slant = par3
-        )
-        Fr <- ptruncskewnorm_nonneg(
-          q = x$xr, location = par1, scale = par2, slant = par3
-        )
-        FL <- ptruncskewnorm_nonneg(
-          q = L, location = par1, scale = par2, slant = par3
-        )
-        FD <- ptruncskewnorm_nonneg(
-          q = D, location = par1, scale = par2, slant = par3
-        )
+        Fl <- pskewnorm_q(q = x$xl, par1 = par1, par2 = par2, par3 = par3)
+        Fr <- pskewnorm_q(q = x$xr, par1 = par1, par2 = par2, par3 = par3)
+        FL <- pskewnorm_q(q = L, par1 = par1, par2 = par2, par3 = par3)
+        FD <- pskewnorm_q(q = D, par1 = par1, par2 = par2, par3 = par3)
         single_interval_sum(Fl, Fr, FL, FD)
       }
     } else if(nc == 4) {
@@ -362,28 +346,26 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
           par1 <- v[1]
           par2 <- exp(v[2])
           par3 <- v[3]
-          pars <- list(location = par1, scale = par2, slant = par3)
+          pars <- list(par1 = par1, par2 = par2, par3 = par3)
           z <- 0
           for(i in 1:n) {
             x1s <- stats::runif(n = M, min = x$x1l[i], max = x$x1r[i])
-            Fl <- ptruncskewnorm_nonneg(
-              q = x$x2l[i] - x1s,
-              location = par1, scale = par2, slant = par3
+            Fl <- pskewnorm_q(
+              q = x$x2l[i] - x1s, par1 = par1, par2 = par2, par3 = par3
             )
-            Fr <- ptruncskewnorm_nonneg(
-              q = x$x2r[i] - x1s,
-              location = par1, scale = par2, slant = par3
+            Fr <- pskewnorm_q(
+              q = x$x2r[i] - x1s, par1 = par1, par2 = par2, par3 = par3
             )
             z <- z + log(mean(Fr - Fl)) -
-              mc_row_correction(x1s, ptruncskewnorm_nonneg, pars)
+              mc_row_correction(x1s, pskewnorm_q, pars)
           }
           z
         }
       } else if(likapprox == "ni") {
         loglik <- build_pc_loglik(
-          pdist = ptruncskewnorm_nonneg,
+          pdist = pskewnorm_q,
           pars_fn = function(v) list(
-            location = v[1], scale = exp(v[2]), slant = v[3]
+            par1 = v[1], par2 = exp(v[2]), par3 = v[3]
           )
         )
       }
@@ -519,6 +501,7 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
   }
   o <- c(famdesc, list(loglik = loglik, originscale = originscale,
            censtype = censtype, likapprox = likapprox,
-           dprimary = dprimary, dprimary_args = dprimary_args))
+           dprimary = dprimary, dprimary_args = dprimary_args,
+           x = x))
   return(o)
 }
