@@ -115,11 +115,11 @@ test_that("nc==4 truncation subtracts per-row log(F_cens(D) - F_cens(L))", {
 test_that("nc==4 ni clamps left-straddle rows to L", {
   skip_if_no_primarycensored()
   # Row whose secondary window straddles the left truncation point: the
-  # observed lower bound x2l - x1l = 0.6 sits below L = 1, but the upper
-  # bound x2r - x1l = 1.5 is inside [L, D]. The old pprimarycensored
-  # truncated path clamped (lower, upper) to [L, D]; the unified
-  # dprimarycensored path must preserve that semantics or every optim step
-  # on a dataset containing such a row would crash inside primarycensored.
+  # observed lower bound x2l - x1l = 0.6 sits below L = 1 while the upper
+  # bound x2r - x1l = 1.5 is inside [L, D]. Without clamping the loglik
+  # closure hands x = 0.6 to dprimarycensored and primarycensored aborts
+  # with "Some values of x are below L", which would crash every optim
+  # step on a dataset containing such a row.
   L <- 1
   D <- 10
   x <- data.frame(x1l = 0, x1r = 0.5, x2l = 0.6, x2r = 1.5)
@@ -128,9 +128,9 @@ test_that("nc==4 ni clamps left-straddle rows to L", {
   ker_value <- m$loglik(v, x)
   expect_true(is.finite(ker_value))
 
-  # Oracle: clamp lower to L, recompute swindow, hand to dprimarycensored
-  # row-by-row. This is the same arithmetic as the old pprimarycensored
-  # path but using the dpcens API directly.
+  # Oracle: clamp lower to L, recompute swindow, evaluate dprimarycensored
+  # row-by-row. This expresses the intended visible-window semantics
+  # directly through the dpcens API.
   lower_c <- pmax(x$x2l - x$x1l, L)
   upper_c <- pmin(x$x2r - x$x1l, D)
   expected <- primarycensored::dprimarycensored(
@@ -147,6 +147,8 @@ test_that("nc==4 ni clamps left-straddle rows to L", {
 test_that("nc==4 ni clamps right-straddle rows to D", {
   skip_if_no_primarycensored()
   # Symmetric case: x2r - x1l = 11 sits above D = 10, lower stays inside.
+  # Without clamping primarycensored aborts with "Upper truncation point
+  # is greater than D".
   L <- 0.5
   D <- 10
   x <- data.frame(x1l = 0, x1r = 0.5, x2l = 5, x2r = 11)

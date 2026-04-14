@@ -197,16 +197,14 @@ kerlikelihood <- function(x, family, likapprox = "ni", L = 0, D = Inf,
   # CDF and a function that extracts a named parameter list from `v`, returns
   # a closure that sums the per-row log-density from
   # primarycensored::dprimarycensored(). The observed secondary window
-  # [x2l - x1l, x2r - x1l] is clamped to [L, D] per row so that rows
-  # straddling either truncation boundary are interpreted as the visible
-  # subset of the window — matching the old pprimarycensored path and
-  # avoiding an error inside primarycensored when the raw lower bound sits
-  # below L. Rows are grouped by (pwindow, swindow) because both are scalar
-  # in dprimarycensored; clamping happens before grouping so straddle rows
-  # form their own groups when their effective swindow differs. With the
-  # default bounds (L = 0, D = Inf) the clamp is a no-op and the call
-  # collapses to the untruncated dprimarycensored. The user-supplied
-  # dprimary / dprimary_args are forwarded too.
+  # [x2l - x1l, x2r - x1l] is clamped to [L, D] per row so that rows whose
+  # window crosses either truncation boundary are interpreted as the
+  # visible subset of the window; without the clamp dprimarycensored
+  # errors when the raw lower bound sits below L. Rows are grouped by
+  # (pwindow, swindow) because both are scalar in dprimarycensored, and
+  # clamping happens before grouping so any clamped rows form their own
+  # groups when their effective swindow differs. The user-supplied
+  # dprimary / dprimary_args are forwarded into primarycensored.
   build_pc_loglik <- function(pdist, pars_fn) {
     force(pdist)
     force(pars_fn)
