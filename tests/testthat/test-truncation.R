@@ -125,10 +125,8 @@ test_that("nc==4 ni drops left-straddle rows with a warning", {
     x2r = c(3, 1.5)
   )
   v <- log(c(2, 0.5))
-  expect_warning(
-    m <- kerlikelihood(
-      x = x, family = "gamma", likapprox = "ni", L = L, D = D
-    ),
+  m <- expect_warning(
+    kerlikelihood(x = x, family = "gamma", likapprox = "ni", L = L, D = D),
     regexp = "straddle"
   )
   expect_identical(nrow(m$x), 1L)
@@ -159,10 +157,8 @@ test_that("nc==4 ni drops right-straddle rows with a warning", {
     x2r = c(3, 11)
   )
   v <- log(c(2, 0.5))
-  expect_warning(
-    m <- kerlikelihood(
-      x = x, family = "gamma", likapprox = "ni", L = L, D = D
-    ),
+  m <- expect_warning(
+    kerlikelihood(x = x, family = "gamma", likapprox = "ni", L = L, D = D),
     regexp = "straddle"
   )
   expect_identical(nrow(m$x), 1L)
@@ -325,8 +321,8 @@ test_that("parfitml warns and drops nc==4 rows incompatible with [L, D]", {
   ]
   x_bad <- data.frame(x1l = 0, x1r = 1, x2l = 12, x2r = 13)
   x <- rbind(x_keep, x_bad)
-  expect_warning(
-    fit <- parfitml(
+  fit <- expect_warning(
+    parfitml(
       x = x, family = "gamma", Bboot = 2L, pgbar = FALSE, L = 1, D = 10
     ),
     regexp = "straddle"
@@ -349,8 +345,8 @@ test_that("parfitml warns and drops nc==2 rows incompatible with [L, D]", {
   x_keep <- x_keep[x_keep$xl < x_keep$xr, ]
   x_bad <- data.frame(xl = 0.1, xr = 0.4)  # fully below L
   x <- rbind(x_keep, x_bad)
-  expect_warning(
-    fit <- parfitml(
+  fit <- expect_warning(
+    parfitml(
       x = x, family = "gamma", Bboot = 2L, pgbar = FALSE, L = 1, D = 10
     ),
     regexp = "straddle"

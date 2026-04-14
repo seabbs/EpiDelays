@@ -62,7 +62,7 @@ family_cases <- list(
     pars = list(mean = 1.5, sd = 0.8)
   ),
   gamma = list(
-    v = c(log(2), log(0.5)),
+    v = log(c(2, 0.5)),
     pdist = stats::pgamma,
     pars = list(shape = 2, rate = 0.5)
   ),
@@ -72,7 +72,7 @@ family_cases <- list(
     pars = list(meanlog = 0.5, sdlog = 0.4)
   ),
   weibull = list(
-    v = c(log(2), log(2)),
+    v = log(c(2, 2)),
     pdist = stats::pweibull,
     pars = list(shape = 2, scale = 2)
   ),
